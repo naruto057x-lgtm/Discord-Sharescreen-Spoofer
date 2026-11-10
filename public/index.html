@@ -36,7 +36,7 @@
           </h1>
           <p class="text-xs text-gray-400 flex items-center gap-2 mt-1">
             <span class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            Live Badge Leaderboard • Individual Account Control
+            Discord Profile v9 Verified • Live Community Leaderboard
           </p>
         </div>
       </div>
@@ -471,8 +471,7 @@
         streamerStats.classList.remove('hidden');
         document.getElementById('capsuleTier').innerText = acc.currentTier;
         document.getElementById('capsuleHours').innerText = `${acc.totalHours} hrs`;
-        const pct = acc.totalHours ? Math.min(100, (acc.totalHours / 100) * 100) : 0;
-        document.getElementById('capsuleProgressBar').style.width = `${pct}%`;
+        document.getElementById('capsuleProgressBar').style.width = `${acc.progressPercent}%`;
         document.getElementById('capsuleNextTier').innerText = `Next: ${acc.nextTier}`;
         document.getElementById('capsuleRemainingHours').innerText = `${acc.remainingHours}h left`;
       } else {
@@ -542,7 +541,6 @@
       container.innerHTML = accounts.map(acc => {
         const isStreamer = acc.role === 'streamer';
         const roleColor = isStreamer ? 'purple' : 'pink';
-        const progressPercent = acc.totalHours ? Math.min(100, (acc.totalHours / 100) * 100) : 0;
 
         let rankBadge = '';
         if (isStreamer) {
@@ -581,7 +579,7 @@
                   <span class="text-emerald-400 font-mono font-bold">${acc.totalHours} hrs</span>
                 </div>
                 <div class="w-full h-1.5 bg-gray-950 rounded-full overflow-hidden border border-gray-800">
-                  <div class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full" style="width: ${progressPercent}%"></div>
+                  <div class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full" style="width: ${acc.progressPercent}%"></div>
                 </div>
                 <div class="flex justify-between text-[10px] text-gray-400 pt-0.5">
                   <span class="text-gray-500">Next: ${acc.nextTier}</span>
