@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord Cloud Badge Hub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Cairo', sans-serif; background-color: #060911; }
+    .glass { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(14px); border: 1px solid rgba(255, 255, 255, 0.07); }
+    .glow-cyan { box-shadow: 0 0 25px rgba(6, 182, 212, 0.2); }
+  </style>
+</head>
+<body class="text-slate-100 min-h-screen p-4 md:p-8 flex flex-col items-center">
+
+  <!-- Header -->
+  <header class="w-full max-w-6xl flex flex-wrap justify-between items-center gap-4 mb-6 glass p-5 rounded-3xl glow-cyan">
+    <div class="flex items-center gap-3">
+      <div class="w-12 h-12 rounded-2xl bg-cyan-600/30 border border-cyan-500/40 flex items-center justify-center text-2xl shadow-lg">☁️</div>
+      <div>
+        <h1 class="text-xl md:text-2xl font-black bg-gradient-to-r from-cyan-400 via-indigo-300 to-purple-400 bg-clip-text text-transparent">
+          Discord Badge Hub • MongoDB Edition
+        </h1>
+        <p class="text-xs text-slate-400">حفظ سحابي دائم 24/7 مع حماية التوكنات ودعم المشاهد المتعدد</p>
+      </div>
+    </div>
+
+    <!-- MongoDB Status -->
+    <div class="flex items-center gap-2 glass px-4 py-2 rounded-2xl border border-emerald-500/30">
+      <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+      <span class="text-xs font-bold text-emerald-300">MongoDB Atlas: متصل ومؤمّن</span>
+    </div>
+  </header>
+
+  <main class="w-full max-w-6xl space-y-6">
+
+    <!-- شريط التحكم السريع -->
+    <div class="glass p-5 rounded-3xl flex flex-wrap justify-between items-center gap-4">
+      <div class="flex gap-3">
+        <button onclick="startAll()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 px-6 py-2.5 rounded-2xl text-xs font-black shadow-lg shadow-emerald-600/30 transition">
+          تشغيل كل الحسابات 🚀
+        </button>
+        <button onclick="stopAll()" class="bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 px-6 py-2.5 rounded-2xl text-xs font-black transition">
+          إيقاف وحفظ الساعات 🛑
+        </button>
+      </div>
+      <button onclick="sendTestWebhook()" class="bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/30 px-4 py-2 rounded-2xl text-xs font-bold transition">
+        إرسال تقرير للديسكورد (Webhook) 🔔
+      </button>
+    </div>
+
+    <!-- فورم إضافة حساب جديد -->
+    <div class="glass p-6 rounded-3xl">
+      <h2 class="text-sm font-bold text-cyan-300 mb-4 flex items-center gap-2">
+        <span>➕</span> إضافة حساب جديد (ستريمر أو مشاهد)
+      </h2>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div>
+          <label class="block text-[11px] text-slate-400 mb-1">نوع الحساب</label>
+          <select id="accRole" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
+            <option value="streamer">بث شاشة (Streamer) 📺</option>
+            <option value="watcher" selected>مشاهد شاشات (Watcher) 👀</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-[11px] text-slate-400 mb-1">توكن الحساب (محمي ومخفي)</label>
+          <input type="password" id="accToken" placeholder="ضع التوكن هنا (مخفي تمامًا)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
+        </div>
+        <div>
+          <label class="block text-[11px] text-slate-400 mb-1">آيدي السيرفر (Server ID)</label>
+          <input type="text" id="accGuild" placeholder="Server ID" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
+        </div>
+        <div>
+          <label class="block text-[11px] text-slate-400 mb-1">آيدي الروم الصوتي (Voice ID)</label>
+          <input type="text" id="accChannel" placeholder="Voice Channel ID" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
+        </div>
+      </div>
+      <div class="mt-4 text-left">
+        <button onclick="addAccount()" class="bg-cyan-600 hover:bg-cyan-500 px-6 py-2 rounded-xl text-xs font-bold transition">
+          حفظ الحساب في MongoDB 💾
+        </button>
+      </div>
+    </div>
+
+    <!-- كروت الحسابات النشطة -->
+    <div>
+      <h2 class="text-sm font-bold text-slate-300 mb-3 flex items-center gap-2">
+        <span>👥</span> الحسابات المسجلة وحالة كل حساب
+      </h2>
+      <div id="accountsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- الكروت هتتولد هنا تلقائيًا -->
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    async function addAccount() {
+      const payload = {
+        role: document.getElementById('accRole').value,
+        token: document.getElementById('accToken').value,
+        guildId: document.getElementById('accGuild').value,
+        channelId: document.getElementById('accChannel').value
+      };
+      if (!payload.token || !payload.channelId) {
+        alert('من فضلك أدخل التوكن وآيدي الروم');
+        return;
+      }
+      await fetch('/api/accounts/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      document.getElementById('accToken').value = '';
+      poll();
+    }
+
+    async function removeAccount(id) {
+      if (!confirm('متأكد إنك عايز تحذف الحساب ده من MongoDB؟')) return;
+      await fetch('/api/accounts/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      poll();
+    }
+
+    async function startAll() {
+      await fetch('/api/start', { method: 'POST' });
+      poll();
+    }
+
+    async function stopAll() {
+      await fetch('/api/stop', { method: 'POST' });
+      poll();
+    }
+
+    async function sendTestWebhook() {
+      await fetch('/api/webhook/test', { method: 'POST' });
+      alert('تم إرسال تقرير الحسابات لقناة الديسكورد بنجاح! 🔔');
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        const grid = document.getElementById('accountsGrid');
+
+        if (!data.accounts || data.accounts.length === 0) {
+          grid.innerHTML = `<div class="col-span-full py-8 text-center glass rounded-3xl text-slate-500 text-xs">مفيش حسابات مضافة حاليًا. ضيف أول حساب فوق وهيتسجل في MongoDB فورًا!</div>`;
+          return;
+        }
+
+        grid.innerHTML = data.accounts.map(acc => `
+          <div class="glass p-5 rounded-3xl border border-slate-800 flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-3">
+                  <img src="${acc.avatar}" class="w-11 h-11 rounded-2xl border border-slate-700 object-cover shadow-md" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+                  <div>
+                    <div class="font-bold text-sm text-slate-100">${acc.username}</div>
+                    <div class="text-[10px] font-mono text-slate-500">${acc.maskedToken}</div>
+                  </div>
+                </div>
+                <span class="px-2.5 py-1 rounded-xl text-[10px] font-black ${acc.role === 'streamer' ? 'bg-purple-900/60 text-purple-300 border border-purple-500/30' : 'bg-cyan-900/60 text-cyan-300 border border-cyan-500/30'}">
+                  ${acc.role === 'streamer' ? 'ستريمر 📺' : 'مشاهد 👀'}
+                </span>
+              </div>
+
+              <div class="space-y-2 mt-4 text-xs">
+                <div class="flex justify-between items-center text-slate-400">
+                  <span>الحالة:</span>
+                  <span class="font-semibold ${acc.connected ? 'text-emerald-400' : 'text-slate-400'}">${acc.status}</span>
+                </div>
+                ${acc.role === 'streamer' ? `
+                  <div class="flex justify-between items-center text-slate-400">
+                    <span>البادج الحالي:</span>
+                    <span class="font-bold text-indigo-300">${acc.currentTier}</span>
+                  </div>
+                  <div class="flex justify-between items-center text-slate-400">
+                    <span>الهدف القادم:</span>
+                    <span class="text-pink-400 font-semibold">${acc.nextTier}</span>
+                  </div>
+                  <div class="flex justify-between items-center text-slate-400">
+                    <span>الساعات المسجلة:</span>
+                    <span class="text-cyan-300 font-black">${acc.totalHours} ساعة (باقي: ${acc.remainingHours}h)</span>
+                  </div>
+                ` : `
+                  <div class="text-[11px] text-cyan-400 mt-2">نظام: يشاهد شاشات الروم مع استراحة دقيقة كل 30 دقيقة</div>
+                `}
+              </div>
+            </div>
+
+            <div class="mt-5 pt-3 border-t border-slate-800 flex justify-between items-center">
+              <span class="text-[10px] text-slate-500 font-mono">روم: ${acc.channelId}</span>
+              <button onclick="removeAccount('${acc.id}')" class="text-red-400 hover:text-red-300 text-xs px-3 py-1 bg-red-950/40 rounded-xl border border-red-800/40 transition">
+                حذف الحساب 🗑️
+              </button>
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {}
+    }
+
+    setInterval(poll, 1500);
+    poll();
+  </script>
+</body>
+</html>
