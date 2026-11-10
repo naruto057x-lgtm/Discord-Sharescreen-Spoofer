@@ -9,9 +9,15 @@
   <style>
     body { background-color: #0b0e14; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     .card-glass { background: rgba(22, 27, 34, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    .capsule-glass { background: rgba(15, 20, 28, 0.92); backdrop-filter: blur(16px); border: 1px solid rgba(139, 92, 246, 0.3); box-shadow: 0 10px 35px -5px rgba(0, 0, 0, 0.7), 0 0 20px -3px rgba(139, 92, 246, 0.25); }
     .glow-purple { box-shadow: 0 0 25px -5px rgba(139, 92, 246, 0.35); }
     .custom-scroll::-webkit-scrollbar { width: 6px; }
     .custom-scroll::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 4px; }
+    .highlight-card { animation: cardPulse 2s ease-in-out infinite alternate; }
+    @keyframes cardPulse {
+      0% { border-color: rgba(99, 102, 241, 0.3); }
+      100% { border-color: rgba(34, 197, 94, 0.9); box-shadow: 0 0 25px rgba(34, 197, 94, 0.3); }
+    }
   </style>
 </head>
 <body class="min-h-screen p-4 md:p-8 flex flex-col justify-between">
@@ -30,7 +36,7 @@
           </h1>
           <p class="text-xs text-gray-400 flex items-center gap-2 mt-1">
             <span class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            Live Badge Leaderboard & 24/7 Auto-Watcher System
+            Live Badge Leaderboard • Individual Account Control
           </p>
         </div>
       </div>
@@ -157,7 +163,7 @@
                 </label>
               </div>
               <p id="watcherRoleNotice" class="text-[10px] text-gray-500 mt-1.5">
-                Note: Regular watchers only watch your own streamer account for dedicated watch-time.
+                Note: Regular watchers automatically watch your own streamer account for dedicated watch-time.
               </p>
             </div>
 
@@ -203,6 +209,68 @@
 
     </div>
 
+  </div>
+
+  <!-- FLOATING USER CAPSULE / HUD (Bottom Left) -->
+  <div id="userFloatingCapsule" class="fixed bottom-6 left-6 z-40 max-w-sm w-full hidden">
+    <div class="capsule-glass rounded-2xl p-4 transition-all duration-300 border border-indigo-500/30">
+      <div class="flex items-center justify-between pb-3 border-b border-gray-800/80">
+        <div class="flex items-center gap-2">
+          <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+            <i class="fa-solid fa-gauge-high"></i> My Station
+          </span>
+        </div>
+        <div class="flex items-center gap-1">
+          <button id="capsulePrevBtn" onclick="switchCapsuleAcc(-1)" class="w-6 h-6 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs flex items-center justify-center hidden">
+            <i class="fa-solid fa-chevron-left"></i>
+          </button>
+          <span id="capsulePageIndicator" class="text-[10px] text-gray-400 font-mono hidden">1/1</span>
+          <button id="capsuleNextBtn" onclick="switchCapsuleAcc(1)" class="w-6 h-6 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs flex items-center justify-center hidden">
+            <i class="fa-solid fa-chevron-right"></i>
+          </button>
+          <button onclick="scrollToMyCard()" title="Highlight in Leaderboard" class="w-6 h-6 rounded-md bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 text-xs flex items-center justify-center ml-1">
+            <i class="fa-solid fa-crosshairs"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="pt-3 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <img id="capsuleAvatar" src="https://cdn.discordapp.com/embed/avatars/0.png" class="w-10 h-10 rounded-xl object-cover border border-indigo-500/30 bg-gray-900">
+            <div>
+              <div class="flex items-center gap-1.5">
+                <span id="capsuleUsername" class="text-xs font-bold text-white">DiscordUser</span>
+                <span id="capsuleRoleBadge" class="text-[9px] font-bold px-1.5 py-0.2 rounded uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30">STREAMER</span>
+              </div>
+              <div class="text-[10px] text-gray-400 flex items-center gap-2 mt-0.5">
+                <span id="capsuleStatusText" class="text-emerald-400 font-medium">Online</span> •
+                <span id="capsuleUptimeText" class="text-gray-400">Live: 0h 0m</span>
+              </div>
+            </div>
+          </div>
+
+          <button id="capsuleToggleBtn" onclick="toggleCurrentCapsuleAccount()" class="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all bg-rose-600 hover:bg-rose-500 text-white">
+            <i class="fa-solid fa-power-off"></i> Disconnect
+          </button>
+        </div>
+
+        <div id="capsuleStreamerStats" class="space-y-1 bg-gray-950/60 p-2 rounded-xl border border-gray-800/80">
+          <div class="flex justify-between text-[11px] font-semibold">
+            <span id="capsuleTier" class="text-indigo-300 font-bold">Tier 1</span>
+            <span id="capsuleHours" class="text-emerald-400 font-mono font-bold">0 hrs</span>
+          </div>
+          <div class="w-full h-1.5 bg-gray-900 rounded-full overflow-hidden">
+            <div id="capsuleProgressBar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full" style="width: 0%"></div>
+          </div>
+          <div class="flex justify-between text-[9px] text-gray-400 pt-0.5">
+            <span id="capsuleNextTier">Next: Tier 2</span>
+            <span id="capsuleRemainingHours" class="text-amber-400 font-semibold">0h left</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Admin Login Modal -->
@@ -258,6 +326,8 @@
   <script>
     let isSystemRunning = false;
     let isAdminUser = false;
+    let myAccounts = [];
+    let currentCapsuleIdx = 0;
 
     function toggleTokenVisibility() {
       const input = document.getElementById('tokenInput');
@@ -322,20 +392,17 @@
         const loginBtn = document.getElementById('adminLoginBtn');
         const logoutBtn = document.getElementById('adminLogoutBtn');
         const masterControls = document.getElementById('adminMasterControls');
-        const watcherNotice = document.getElementById('watcherRoleNotice');
 
         if (data.isAdmin) {
           loginBtn.classList.add('hidden');
           logoutBtn.classList.remove('hidden');
           logoutBtn.classList.add('flex');
           masterControls.classList.remove('hidden');
-          watcherNotice.innerText = 'Admin mode: Watchers will balance all community streams automatically.';
         } else {
           loginBtn.classList.remove('hidden');
           logoutBtn.classList.add('hidden');
           logoutBtn.classList.remove('flex');
           masterControls.classList.add('hidden');
-          watcherNotice.innerText = 'Note: Regular watchers only watch your own streamer account for dedicated watch-time.';
         }
 
         const sysBadge = document.getElementById('systemStatusBadge');
@@ -354,10 +421,101 @@
           ? '<span class="text-emerald-400">CONNECTED</span>'
           : '<span class="text-amber-400">IN-MEMORY</span>';
 
-        renderAccounts(data.accounts || []);
+        const accounts = data.accounts || [];
+        myAccounts = accounts.filter(a => a.isOwner);
+
+        renderAccounts(accounts);
+        renderFloatingCapsule();
       } catch (err) {
         console.error('Poll Error:', err);
       }
+    }
+
+    function renderFloatingCapsule() {
+      const capsule = document.getElementById('userFloatingCapsule');
+      if (!myAccounts || myAccounts.length === 0) {
+        capsule.classList.add('hidden');
+        return;
+      }
+      capsule.classList.remove('hidden');
+
+      if (currentCapsuleIdx >= myAccounts.length) currentCapsuleIdx = 0;
+      const acc = myAccounts[currentCapsuleIdx];
+
+      document.getElementById('capsuleAvatar').src = acc.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
+      document.getElementById('capsuleUsername').innerText = acc.username;
+
+      const roleBadge = document.getElementById('capsuleRoleBadge');
+      roleBadge.innerText = acc.role.toUpperCase();
+      roleBadge.className = acc.role === 'streamer'
+        ? 'text-[9px] font-bold px-1.5 py-0.2 rounded uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30'
+        : 'text-[9px] font-bold px-1.5 py-0.2 rounded uppercase bg-pink-500/20 text-pink-300 border border-pink-500/30';
+
+      const statusEl = document.getElementById('capsuleStatusText');
+      statusEl.innerText = acc.connected ? 'Online' : 'Stopped';
+      statusEl.className = acc.connected ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium';
+
+      document.getElementById('capsuleUptimeText').innerText = `Live: ${acc.uptime}`;
+
+      const toggleBtn = document.getElementById('capsuleToggleBtn');
+      if (acc.running) {
+        toggleBtn.innerHTML = '<i class="fa-solid fa-power-off"></i> Disconnect';
+        toggleBtn.className = 'px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all bg-rose-600 hover:bg-rose-500 text-white';
+      } else {
+        toggleBtn.innerHTML = '<i class="fa-solid fa-play"></i> Connect';
+        toggleBtn.className = 'px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all bg-emerald-600 hover:bg-emerald-500 text-white';
+      }
+
+      const streamerStats = document.getElementById('capsuleStreamerStats');
+      if (acc.role === 'streamer') {
+        streamerStats.classList.remove('hidden');
+        document.getElementById('capsuleTier').innerText = acc.currentTier;
+        document.getElementById('capsuleHours').innerText = `${acc.totalHours} hrs`;
+        const pct = acc.totalHours ? Math.min(100, (acc.totalHours / 100) * 100) : 0;
+        document.getElementById('capsuleProgressBar').style.width = `${pct}%`;
+        document.getElementById('capsuleNextTier').innerText = `Next: ${acc.nextTier}`;
+        document.getElementById('capsuleRemainingHours').innerText = `${acc.remainingHours}h left`;
+      } else {
+        streamerStats.classList.add('hidden');
+      }
+
+      const prevBtn = document.getElementById('capsulePrevBtn');
+      const nextBtn = document.getElementById('capsuleNextBtn');
+      const pageInd = document.getElementById('capsulePageIndicator');
+
+      if (myAccounts.length > 1) {
+        prevBtn.classList.remove('hidden');
+        nextBtn.classList.remove('hidden');
+        pageInd.classList.remove('hidden');
+        pageInd.innerText = `${currentCapsuleIdx + 1}/${myAccounts.length}`;
+      } else {
+        prevBtn.classList.add('hidden');
+        nextBtn.classList.add('hidden');
+        pageInd.classList.add('hidden');
+      }
+    }
+
+    function switchCapsuleAcc(dir) {
+      if (!myAccounts || myAccounts.length === 0) return;
+      currentCapsuleIdx = (currentCapsuleIdx + dir + myAccounts.length) % myAccounts.length;
+      renderFloatingCapsule();
+    }
+
+    function scrollToMyCard() {
+      if (!myAccounts || myAccounts.length === 0) return;
+      const acc = myAccounts[currentCapsuleIdx];
+      const el = document.getElementById(`acc-card-${acc.id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('highlight-card');
+        setTimeout(() => el.classList.remove('highlight-card'), 4000);
+      }
+    }
+
+    async function toggleCurrentCapsuleAccount() {
+      if (!myAccounts || myAccounts.length === 0) return;
+      const acc = myAccounts[currentCapsuleIdx];
+      await toggleAccount(acc.id);
     }
 
     function renderAccounts(accounts) {
@@ -396,7 +554,7 @@
         }
 
         return `
-          <div class="card-glass rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 border-l-4 border-${roleColor}-500 transition-all hover:bg-gray-800/40">
+          <div id="acc-card-${acc.id}" class="card-glass rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 border-l-4 border-${roleColor}-500 transition-all hover:bg-gray-800/40">
             <div class="flex items-center gap-3 w-full md:w-auto">
               ${isStreamer ? `<div class="w-6 text-center">${rankBadge}</div>` : '<div class="w-6 text-center text-pink-400 text-xs"><i class="fa-solid fa-eye"></i></div>'}
               <img src="${acc.avatar}" class="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-gray-900" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
@@ -436,10 +594,13 @@
               </div>
             `}
 
-            <!-- Delete button: Only for the owner of the account or Admin -->
-            <div>
+            <!-- Action Controls (Toggle Start/Stop & Delete) -->
+            <div class="flex items-center gap-1.5">
               ${acc.isOwner ? `
-                <button onclick="removeAccount('${acc.id}')" class="text-gray-500 hover:text-rose-400 p-2 text-sm transition-all" title="Remove My Account">
+                <button onclick="toggleAccount('${acc.id}')" class="p-2 text-xs rounded-lg transition-all ${acc.running ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'}" title="${acc.running ? 'Disconnect Account' : 'Connect Account'}">
+                  <i class="fa-solid fa-power-off"></i>
+                </button>
+                <button onclick="removeAccount('${acc.id}')" class="p-2 text-xs rounded-lg text-gray-400 hover:text-rose-400 transition-all hover:bg-gray-800" title="Delete Account">
                   <i class="fa-solid fa-trash-can"></i>
                 </button>
               ` : `
@@ -497,6 +658,19 @@
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> Verify & Connect';
       }
+    }
+
+    async function toggleAccount(id) {
+      const res = await fetch('/api/accounts/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.error || 'Could not toggle account.');
+      }
+      poll();
     }
 
     async function removeAccount(id) {
