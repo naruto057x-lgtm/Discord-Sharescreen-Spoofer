@@ -30,18 +30,18 @@ USER_AGENT = (
     "discord/1.0.9168 Chrome/128.0.6613.186 Electron/32.2.2 Safari/537.36"
 )
 
-STREAM_BADGE_TIERS = [
-    (1, "Tier 1: Newcomer (1 hour)"),
-    (5, "Tier 2: Fledgling (5 hours)"),
-    (20, "Tier 3: Breakout (20 hours)"),
-    (75, "Tier 4: Standout (75 hours)"),
-    (150, "Tier 5: Trendsetter (150 hours)"),
-    (300, "Tier 6: Headliner (300 hours)"),
-    (500, "Tier 7: Star (500 hours)"),
-    (1000, "Tier 8: Sensation (1,000 hours)"),
-    (2000, "Tier 9: Visionary (2,000 hours)"),
-    (5000, "Tier 10: Phenomenon (5,000+ hours)"),
-]
+STREAM_BADGE_MILESTONES = {
+    1: (1, "Tier 1: Newcomer (1 hour)"),
+    2: (5, "Tier 2: Fledgling (5 hours)"),
+    3: (20, "Tier 3: Breakout (20 hours)"),
+    4: (75, "Tier 4: Standout (75 hours)"),
+    5: (150, "Tier 5: Trendsetter (150 hours)"),
+    6: (300, "Tier 6: Headliner (300 hours)"),
+    7: (500, "Tier 7: Star (500 hours)"),
+    8: (1000, "Tier 8: Sensation (1,000 hours)"),
+    9: (2000, "Tier 9: Visionary (2,000 hours)"),
+    10: (5000, "Tier 10: Phenomenon (5,000+ hours)"),
+}
 
 def make_super_properties() -> str:
     props = {
@@ -264,7 +264,7 @@ class RTCVoiceSession:
             pass
 
 class ManagedAccount:
-    def __init__(self, acc_id: str, token: str, role: str, guild_id: str, channel_id: str, owner_id: str = "global", scope: str = "community", username="Loading...", avatar_url=None, total_seconds=0, discord_base_hours=0.0):
+    def __init__(self, acc_id: str, token: str, role: str, guild_id: str, channel_id: str, owner_id: str = "global", scope: str = "community", username="Loading...", avatar_url=None, tier_num=0, raw_hours=None, total_hours=0.0, current_tier="No Badge (0h)", next_tier="Tier 1: Newcomer (1 hour)", remaining_hours=1.0, progress_percent=0.0):
         self.acc_id = acc_id
         self.token = token.strip()
         self.role = role
@@ -274,8 +274,16 @@ class ManagedAccount:
         self.scope = scope
         self.username = username
         self.avatar_url = avatar_url or "https://cdn.discordapp.com/embed/avatars/0.png"
-        self.total_seconds = total_seconds
-        self.discord_base_hours = discord_base_hours
+        
+        # Real Discord Badge State (No fake local counter)
+        self.tier_num = tier_num
+        self.raw_hours = raw_hours
+        self.total_hours = total_hours
+        self.current_tier = current_tier
+        self.next_tier = next_tier
+        self.remaining_hours = remaining_hours
+        self.progress_percent = progress_percent
+
         self.status = "Idle 🛑"
         self.is_connected = False
         self.connected_since = None
@@ -402,6 +410,7 @@ class ManagedAccount:
             self.connected_since = time.time()
             print(f"✅ [{self.username}] Authenticated on Gateway!", flush=True)
 
+            # Join target voice room
             await self.ws.send_json({
                 "op": 4,
                 "d": {"guild_id": self.guild_id, "channel_id": self.channel_id, "self_mute": True, "self_deaf": True, "self_video": False}
@@ -475,6 +484,7 @@ class CloudSystemManager:
         self.sync_db_task = None
         self.cycle_task = None
         self.rebalance_task = None
+        self.badge_refresh_task = None
 
     def ensure_background_tasks(self):
         if not self.sync_db_task or self.sync_db_task.done():
@@ -483,6 +493,8 @@ class CloudSystemManager:
             self.rebalance_task = asyncio.create_task(self._periodic_rebalance_loop())
         if not self.cycle_task or self.cycle_task.done():
             self.cycle_task = asyncio.create_task(self._three_hour_cooldown_loop())
+        if not self.badge_refresh_task or self.badge_refresh_task.done():
+            self.badge_refresh_task = asyncio.create_task(self._badge_refresh_loop())
 
     async def resolve_guild(self):
         url = f"https://discord.com/api/v10/invites/{SERVER_INVITE_CODE}"
@@ -502,27 +514,79 @@ class CloudSystemManager:
         self.guild_id = DEFAULT_GUILD_ID
         print(f"ℹ️ Fixed Guild ID: {self.guild_id}", flush=True)
 
-    async def fetch_discord_badge_hours(self, user_id: str, token: str):
-        url = f"https://discord.com/api/v10/users/{user_id}/profile"
-        headers = {"Authorization": token, "User-Agent": USER_AGENT}
+    # Real Badge Inspector from Discord Profile API v9
+    async def update_account_badge_from_discord(self, acc: ManagedAccount):
+        if not acc.user_id or not acc.token:
+            return
+        url = f"https://discord.com/api/v9/users/{acc.user_id}/profile"
+        headers = {"Authorization": acc.token, "User-Agent": USER_AGENT}
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=6) as resp:
+                async with session.get(url, headers=headers, timeout=8) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         badges = data.get("badges", [])
-                        tier_map = {1: 1, 2: 5, 3: 20, 4: 75, 5: 150, 6: 300, 7: 500, 8: 1000, 9: 2000, 10: 5000}
+                        matched_tier = 0
+                        raw_hrs = None
+
                         for b in badges:
                             b_id = str(b.get("id", "")).lower()
-                            desc = str(b.get("description", "")).lower()
-                            if "stream" in b_id or "stream" in desc:
-                                match = re.search(r"(\d+)", b_id)
+                            desc = str(b.get("description", ""))
+
+                            # Check for official streaming progression badge IDs
+                            if "streaming" in b_id or "stream" in b_id:
+                                match = re.search(r"streaming(?:_tier)?_(\d+)", b_id, re.I)
                                 if match:
-                                    t_num = int(match.group(1))
-                                    return float(tier_map.get(t_num, 1))
-        except Exception:
+                                    matched_tier = int(match.group(1))
+
+                                # Extract raw hours if reported by Discord
+                                hrs_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)", desc, re.I)
+                                if hrs_match:
+                                    try:
+                                        raw_hrs = float(hrs_match.group(1))
+                                    except Exception:
+                                        pass
+                                break
+
+                        acc.tier_num = matched_tier
+                        acc.raw_hours = raw_hrs
+
+                        if matched_tier == 0:
+                            acc.current_tier = "No Badge (0h)"
+                            acc.total_hours = raw_hrs if raw_hrs is not None else 0.0
+                            acc.next_tier = "Tier 1: Newcomer (1 hour)"
+                            acc.remaining_hours = max(0.0, 1.0 - acc.total_hours)
+                            acc.progress_percent = min(100.0, (acc.total_hours / 1.0) * 100.0)
+                        elif matched_tier in STREAM_BADGE_MILESTONES:
+                            curr_base_hrs, curr_name = STREAM_BADGE_MILESTONES[matched_tier]
+                            acc.current_tier = curr_name
+                            acc.total_hours = raw_hrs if raw_hrs is not None else float(curr_base_hrs)
+                            if matched_tier < 10:
+                                next_base_hrs, next_name = STREAM_BADGE_MILESTONES[matched_tier + 1]
+                                acc.next_tier = next_name
+                                acc.remaining_hours = max(0.0, float(next_base_hrs) - acc.total_hours)
+                                span = float(next_base_hrs - curr_base_hrs)
+                                offset = acc.total_hours - float(curr_base_hrs)
+                                acc.progress_percent = min(100.0, max(0.0, (offset / span) * 100.0)) if span > 0 else 100.0
+                            else:
+                                acc.next_tier = "Max Level Reached! 👑"
+                                acc.remaining_hours = 0.0
+                                acc.progress_percent = 100.0
+                        print(f"📊 [Discord Profile API v9] {acc.username}: Verified Tier {matched_tier} ({acc.total_hours} hrs)", flush=True)
+        except Exception as e:
+            print(f"⚠️ Could not sync Discord profile for {acc.username}: {e}", flush=True)
+
+    # Background loop: Re-fetches real badge progress every 5 minutes (300 seconds)
+    async def _badge_refresh_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(300)
+                for acc in list(self.accounts.values()):
+                    if acc.user_id and acc.token:
+                        await self.update_account_badge_from_discord(acc)
+                        await self.save_account_to_db(acc)
+        except asyncio.CancelledError:
             pass
-        return 0.0
 
     async def verify_token_and_membership(self, token: str):
         headers = {"Authorization": token, "User-Agent": USER_AGENT}
@@ -566,8 +630,13 @@ class CloudSystemManager:
                     scope=doc.get("scope", "community" if doc.get("owner_id") == "admin" else "private"),
                     username=doc.get("username", "Saved Account"),
                     avatar_url=doc.get("avatar_url"),
-                    total_seconds=doc.get("total_seconds", 0),
-                    discord_base_hours=doc.get("discord_base_hours", 0.0)
+                    tier_num=doc.get("tier_num", 0),
+                    raw_hours=doc.get("raw_hours"),
+                    total_hours=doc.get("total_hours", 0.0),
+                    current_tier=doc.get("current_tier", "No Badge (0h)"),
+                    next_tier=doc.get("next_tier", "Tier 1: Newcomer (1 hour)"),
+                    remaining_hours=doc.get("remaining_hours", 1.0),
+                    progress_percent=doc.get("progress_percent", 0.0)
                 )
             print(f"✅ Restored {len(self.accounts)} accounts from MongoDB!", flush=True)
         except Exception as e:
@@ -589,8 +658,13 @@ class CloudSystemManager:
                         "scope": acc.scope,
                         "username": acc.username,
                         "avatar_url": acc.avatar_url,
-                        "total_seconds": acc.total_seconds,
-                        "discord_base_hours": acc.discord_base_hours
+                        "tier_num": acc.tier_num,
+                        "raw_hours": acc.raw_hours,
+                        "total_hours": acc.total_hours,
+                        "current_tier": acc.current_tier,
+                        "next_tier": acc.next_tier,
+                        "remaining_hours": acc.remaining_hours,
+                        "progress_percent": acc.progress_percent
                     }},
                     upsert=True
                 )
@@ -604,29 +678,11 @@ class CloudSystemManager:
             except Exception:
                 pass
 
-    def get_badge_info(self, total_seconds: float, discord_base_hours: float = 0.0):
-        total_hours = discord_base_hours + (total_seconds / 3600.0)
-        cur_tier = "None (0h)"
-        next_tier = STREAM_BADGE_TIERS[0][1]
-        remaining = STREAM_BADGE_TIERS[0][0] - total_hours
-        for req_hrs, title in STREAM_BADGE_TIERS:
-            if total_hours >= req_hrs:
-                cur_tier = title
-            else:
-                next_tier = title
-                remaining = req_hrs - total_hours
-                break
-        else:
-            next_tier = "Max Phenomenon Tier! 👑"
-            remaining = 0.0
-        return cur_tier, next_tier, max(0.0, remaining), total_hours
-
     async def balance_and_pair_streams(self):
         await asyncio.sleep(3)
         active_streamers = [a for a in self.accounts.values() if a.role == "streamer" and a.is_connected and a.stream_key]
         active_watchers = [a for a in self.accounts.values() if a.role == "watcher" and a.is_connected]
 
-        # 1. Private Watchers
         private_watchers = [w for w in active_watchers if w.scope == "private"]
         for pw in private_watchers:
             my_streamers = [s for s in active_streamers if s.owner_id == pw.owner_id]
@@ -636,7 +692,6 @@ class CloudSystemManager:
                     await pw.watch_target(s_key)
                     await asyncio.sleep(5)
 
-        # 2. Community Watchers (Load-Balanced)
         comm_watchers = [w for w in active_watchers if w.scope == "community"]
         num_comm = len(comm_watchers)
         if num_comm > 0 and len(active_streamers) > 0:
@@ -707,13 +762,12 @@ class CloudSystemManager:
         except asyncio.CancelledError:
             pass
 
+    # Real DB auto-save loop: Saves state without fake local counter ticks
     async def _auto_save_loop(self):
         try:
             while True:
                 await asyncio.sleep(30)
                 for acc in self.accounts.values():
-                    if acc.role == "streamer" and acc.is_connected and not acc.cooldown_active:
-                        acc.total_seconds += 30
                     if acc.running:
                         await self.save_account_to_db(acc)
         except asyncio.CancelledError:
@@ -725,10 +779,9 @@ class CloudSystemManager:
         fields = []
         for acc in self.accounts.values():
             if acc.role == "streamer":
-                cur_t, nxt_t, rem_h, hrs = self.get_badge_info(acc.total_seconds, acc.discord_base_hours)
                 fields.append({
-                    "name": f"📺 {acc.username} ({hrs:.1f}h total)",
-                    "value": f"Current: {cur_t}\nNext: {nxt_t}\nRemaining: {rem_h:.1f}h",
+                    "name": f"📺 {acc.username} ({acc.total_hours}h)",
+                    "value": f"Current: {acc.current_tier}\nNext: {acc.next_tier}\nRemaining: {acc.remaining_hours}h",
                     "inline": True
                 })
         if not fields:
@@ -739,7 +792,7 @@ class CloudSystemManager:
             "avatar_url": "https://cdn.discordapp.com/emojis/1041155314777309244.webp",
             "embeds": [{
                 "title": title, "color": 5793266, "fields": fields,
-                "footer": {"text": "Community Spoofer Leaderboard • Railway"}
+                "footer": {"text": "Discord Profile v9 Verified • Railway"}
             }]
         }
         try:
@@ -774,16 +827,16 @@ async def session_cookie_middleware(request, handler):
 async def handle_index(request):
     return web.FileResponse("public/index.html")
 
+# Security fix: Strictly check password only (removed username check)
 @routes.post("/api/admin/login")
 async def handle_admin_login(request):
     data = await request.json()
     pwd = data.get("password", "").strip()
-    usr = data.get("username", "").strip()
-    if pwd == ADMIN_SECRET or usr == ADMIN_SECRET:
+    if pwd == ADMIN_SECRET:
         resp = web.json_response({"success": True})
         resp.set_cookie("admin_token", ADMIN_SECRET, max_age=86400 * 7, httponly=True, samesite="Lax")
         return resp
-    return web.json_response({"success": False, "error": "Invalid admin credentials!"})
+    return web.json_response({"success": False, "error": "Invalid admin password!"})
 
 @routes.post("/api/admin/logout")
 async def handle_admin_logout(request):
@@ -800,7 +853,6 @@ async def handle_status(request):
 
     accs = []
     for acc in manager.accounts.values():
-        cur_t, nxt_t, rem_h, hrs = manager.get_badge_info(acc.total_seconds, acc.discord_base_hours)
         is_owner = is_admin or (acc.owner_id == sess_id)
 
         accs.append({
@@ -814,15 +866,18 @@ async def handle_status(request):
             "connected": acc.is_connected,
             "running": acc.running,
             "uptime": acc.get_uptime_string(),
-            "totalHours": round(hrs, 2),
-            "discordBaseHours": round(acc.discord_base_hours, 2),
-            "currentTier": cur_t,
-            "nextTier": nxt_t,
-            "remainingHours": round(rem_h, 2),
+            "tierNum": acc.tier_num,
+            "totalHours": round(acc.total_hours, 2),
+            "hasRawHours": acc.raw_hours is not None,
+            "currentTier": acc.current_tier,
+            "nextTier": acc.next_tier,
+            "remainingHours": round(acc.remaining_hours, 2),
+            "progressPercent": round(acc.progress_percent, 1),
             "isOwner": is_owner
         })
 
-    accs.sort(key=lambda x: (0 if x["role"] == "streamer" else 1, -x["totalHours"] if x["totalHours"] is not None else 0))
+    # Sort streamers by real Discord hours descending
+    accs.sort(key=lambda x: (0 if x["role"] == "streamer" else 1, -x["totalHours"]))
 
     return web.json_response({
         "isRunning": manager.is_running,
@@ -858,8 +913,6 @@ async def handle_add(request):
         })
 
     u_id = user_info.get("id")
-    discord_base_hrs = await manager.fetch_discord_badge_hours(u_id, token)
-
     acc_id = str(uuid.uuid4())[:8]
     av = user_info.get("avatar")
     avatar_url = f"https://cdn.discordapp.com/avatars/{u_id}/{av}.png?size=128" if av else f"https://cdn.discordapp.com/embed/avatars/{int(u_id or 0) % 5}.png"
@@ -875,20 +928,21 @@ async def handle_add(request):
         owner_id="admin" if is_admin else sess_id,
         scope=scope,
         username=user_info.get("username", "DiscordUser"),
-        avatar_url=avatar_url,
-        discord_base_hours=discord_base_hrs
+        avatar_url=avatar_url
     )
+    acc.user_id = u_id
     manager.accounts[acc_id] = acc
+
+    # Fetch real Discord profile badge immediately upon adding
+    await manager.update_account_badge_from_discord(acc)
     await manager.save_account_to_db(acc)
 
-    # Auto start newly registered account
     manager.ensure_background_tasks()
     await acc.start()
     asyncio.create_task(manager.balance_and_pair_streams())
 
     return web.json_response({"success": True, "username": acc.username, "scope": scope})
 
-# Individual Account Connect/Disconnect Toggle Route
 @routes.post("/api/accounts/toggle")
 async def handle_toggle(request):
     data = await request.json()
