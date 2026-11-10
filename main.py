@@ -276,7 +276,7 @@ class ManagedAccount:
         self.avatar_url = avatar_url or "https://cdn.discordapp.com/embed/avatars/0.png"
         self.total_seconds = total_seconds
         self.discord_base_hours = discord_base_hours
-        self.status = "Ready"
+        self.status = "Idle 🛑"
         self.is_connected = False
         self.connected_since = None
         self.user_id = None
@@ -311,6 +311,7 @@ class ManagedAccount:
         if self.running:
             return
         self.running = True
+        self.status = "Connecting... ⏳"
         self.task = asyncio.create_task(self._loop())
 
     async def stop(self):
@@ -331,7 +332,7 @@ class ManagedAccount:
             await self.stream_rtc.stop()
         self.is_connected = False
         self.connected_since = None
-        self.status = "Stopped 🛑"
+        self.status = "Idle 🛑"
 
     async def _loop(self):
         while self.running:
@@ -372,8 +373,10 @@ class ManagedAccount:
                     if self.ws:
                         await self.ws.close()
             except Exception as e:
+                if not self.running:
+                    break
                 self.status = f"Error: {e}"
-                print(f"❌ [{self.username}] Error: {e}", flush=True)
+                print(f"❌ [{self.username}] Gateway Error: {e}", flush=True)
                 await asyncio.sleep(6)
 
     async def _hb(self, interval: float):
@@ -472,6 +475,14 @@ class CloudSystemManager:
         self.sync_db_task = None
         self.cycle_task = None
         self.rebalance_task = None
+
+    def ensure_background_tasks(self):
+        if not self.sync_db_task or self.sync_db_task.done():
+            self.sync_db_task = asyncio.create_task(self._auto_save_loop())
+        if not self.rebalance_task or self.rebalance_task.done():
+            self.rebalance_task = asyncio.create_task(self._periodic_rebalance_loop())
+        if not self.cycle_task or self.cycle_task.done():
+            self.cycle_task = asyncio.create_task(self._three_hour_cooldown_loop())
 
     async def resolve_guild(self):
         url = f"https://discord.com/api/v10/invites/{SERVER_INVITE_CODE}"
@@ -611,11 +622,11 @@ class CloudSystemManager:
         return cur_tier, next_tier, max(0.0, remaining), total_hours
 
     async def balance_and_pair_streams(self):
-        await asyncio.sleep(4)
+        await asyncio.sleep(3)
         active_streamers = [a for a in self.accounts.values() if a.role == "streamer" and a.is_connected and a.stream_key]
         active_watchers = [a for a in self.accounts.values() if a.role == "watcher" and a.is_connected]
 
-        # 1. Private Watchers: Only watch streams owned by the same user
+        # 1. Private Watchers
         private_watchers = [w for w in active_watchers if w.scope == "private"]
         for pw in private_watchers:
             my_streamers = [s for s in active_streamers if s.owner_id == pw.owner_id]
@@ -623,9 +634,9 @@ class CloudSystemManager:
                 s_key = s.stream_key or s.build_stream_key()
                 if s_key not in pw.watching_streams:
                     await pw.watch_target(s_key)
-                    await asyncio.sleep(6)
+                    await asyncio.sleep(5)
 
-        # 2. Community Watchers: Split streams evenly (50/50 load balancing)
+        # 2. Community Watchers (Load-Balanced)
         comm_watchers = [w for w in active_watchers if w.scope == "community"]
         num_comm = len(comm_watchers)
         if num_comm > 0 and len(active_streamers) > 0:
@@ -634,39 +645,30 @@ class CloudSystemManager:
                 s_key = s.stream_key or s.build_stream_key()
                 if s_key not in assigned_watcher.watching_streams:
                     await assigned_watcher.watch_target(s_key)
-                    await asyncio.sleep(6)
+                    await asyncio.sleep(5)
 
     async def start_all(self):
-        if self.is_running:
-            return
         self.is_running = True
-        print("🚀 Starting all accounts with safety intervals...", flush=True)
+        self.ensure_background_tasks()
+        print("🚀 Starting all accounts...", flush=True)
         for acc in self.accounts.values():
-            await acc.start()
-            await asyncio.sleep(5)
-
-        self.rebalance_task = asyncio.create_task(self._periodic_rebalance_loop())
-        self.cycle_task = asyncio.create_task(self._three_hour_cooldown_loop())
-        self.sync_db_task = asyncio.create_task(self._auto_save_loop())
-        await self.send_webhook("🚀 System Started: Streamers & Watchers are now online.")
+            if not acc.running:
+                await acc.start()
+                await asyncio.sleep(5)
+        await self.send_webhook("🚀 System: All accounts initiated.")
 
     async def stop_all(self):
         self.is_running = False
-        if self.rebalance_task:
-            self.rebalance_task.cancel()
-        if self.cycle_task:
-            self.cycle_task.cancel()
-        if self.sync_db_task:
-            self.sync_db_task.cancel()
         for acc in self.accounts.values():
-            await acc.stop()
-            await self.save_account_to_db(acc)
-        print("🛑 All accounts have been safely stopped.", flush=True)
-        await self.send_webhook("🛑 System Stopped: All accounts offline.")
+            if acc.running:
+                await acc.stop()
+                await self.save_account_to_db(acc)
+        print("🛑 All accounts stopped.", flush=True)
+        await self.send_webhook("🛑 System: All accounts halted.")
 
     async def _periodic_rebalance_loop(self):
         try:
-            while self.is_running:
+            while True:
                 await self.balance_and_pair_streams()
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
@@ -674,11 +676,13 @@ class CloudSystemManager:
 
     async def _three_hour_cooldown_loop(self):
         try:
-            while self.is_running:
+            while True:
                 await asyncio.sleep(3 * 3600)
-                if not self.is_running:
-                    break
-                print("☕ [Anti-Rate-Limit] 3-minute cooldown rest for all accounts...", flush=True)
+                has_active = any(a.is_connected for a in self.accounts.values())
+                if not has_active:
+                    continue
+
+                print("☕ [Anti-Rate-Limit] 3-minute cooldown rest for all active accounts...", flush=True)
                 for acc in self.accounts.values():
                     if acc.is_connected and acc.ws and not acc.ws.closed:
                         acc.cooldown_active = True
@@ -687,11 +691,9 @@ class CloudSystemManager:
                         await acc.ws.send_json({"op": 4, "d": {"guild_id": acc.guild_id, "channel_id": None, "self_mute": True, "self_deaf": True}})
 
                 await asyncio.sleep(180)
-                if not self.is_running:
-                    break
-                print("🔄 [Anti-Rate-Limit] Resuming all accounts...", flush=True)
+                print("🔄 [Anti-Rate-Limit] Resuming accounts after rest...", flush=True)
                 for acc in self.accounts.values():
-                    if acc.is_connected and acc.ws and not acc.ws.closed:
+                    if acc.running and acc.ws and not acc.ws.closed:
                         acc.cooldown_active = False
                         await acc.ws.send_json({"op": 4, "d": {"guild_id": acc.guild_id, "channel_id": acc.channel_id, "self_mute": True, "self_deaf": True, "self_video": False}})
                         if acc.role == "streamer":
@@ -707,12 +709,13 @@ class CloudSystemManager:
 
     async def _auto_save_loop(self):
         try:
-            while self.is_running:
+            while True:
                 await asyncio.sleep(30)
                 for acc in self.accounts.values():
                     if acc.role == "streamer" and acc.is_connected and not acc.cooldown_active:
                         acc.total_seconds += 30
-                    await self.save_account_to_db(acc)
+                    if acc.running:
+                        await self.save_account_to_db(acc)
         except asyncio.CancelledError:
             pass
 
@@ -800,7 +803,6 @@ async def handle_status(request):
         cur_t, nxt_t, rem_h, hrs = manager.get_badge_info(acc.total_seconds, acc.discord_base_hours)
         is_owner = is_admin or (acc.owner_id == sess_id)
 
-        # Full transparency for everyone! All hours & tiers are visible
         accs.append({
             "id": acc.acc_id,
             "role": acc.role,
@@ -810,6 +812,7 @@ async def handle_status(request):
             "maskedToken": acc.mask_token(),
             "status": acc.status,
             "connected": acc.is_connected,
+            "running": acc.running,
             "uptime": acc.get_uptime_string(),
             "totalHours": round(hrs, 2),
             "discordBaseHours": round(acc.discord_base_hours, 2),
@@ -819,7 +822,6 @@ async def handle_status(request):
             "isOwner": is_owner
         })
 
-    # Sort: Streamers by highest hours first (Leaderboard style!), then Watchers
     accs.sort(key=lambda x: (0 if x["role"] == "streamer" else 1, -x["totalHours"] if x["totalHours"] is not None else 0))
 
     return web.json_response({
@@ -879,11 +881,40 @@ async def handle_add(request):
     manager.accounts[acc_id] = acc
     await manager.save_account_to_db(acc)
 
-    if manager.is_running:
-        await acc.start()
-        asyncio.create_task(manager.balance_and_pair_streams())
+    # Auto start newly registered account
+    manager.ensure_background_tasks()
+    await acc.start()
+    asyncio.create_task(manager.balance_and_pair_streams())
 
     return web.json_response({"success": True, "username": acc.username, "scope": scope})
+
+# Individual Account Connect/Disconnect Toggle Route
+@routes.post("/api/accounts/toggle")
+async def handle_toggle(request):
+    data = await request.json()
+    acc_id = data.get("id")
+    sess_id = request.get("session_id", "")
+    admin_cookie = request.cookies.get("admin_token", "")
+    admin_header = request.headers.get("X-Admin-Token", "")
+    is_admin = (admin_cookie == ADMIN_SECRET or admin_header == ADMIN_SECRET)
+
+    if acc_id not in manager.accounts:
+        return web.json_response({"success": False, "error": "Account not found."})
+
+    acc = manager.accounts[acc_id]
+    if not is_admin and acc.owner_id != sess_id:
+        return web.json_response({"success": False, "error": "Unauthorized: You can only control your own accounts!"})
+
+    if acc.running:
+        await acc.stop()
+        await manager.save_account_to_db(acc)
+        return web.json_response({"success": True, "running": False, "status": "Idle 🛑"})
+    else:
+        manager.ensure_background_tasks()
+        await acc.start()
+        await manager.save_account_to_db(acc)
+        asyncio.create_task(manager.balance_and_pair_streams())
+        return web.json_response({"success": True, "running": True, "status": "Connecting... ⏳"})
 
 @routes.post("/api/accounts/remove")
 async def handle_remove(request):
@@ -938,9 +969,10 @@ app.add_routes(routes)
 app.router.add_static("/public/", path="public", name="public")
 
 async def main():
-    print(f"🚀 Initializing Community Badge Booster Leaderboard...", flush=True)
+    print(f"🚀 Initializing Community Badge Booster Server...", flush=True)
     await manager.resolve_guild()
     await manager.init_mongo()
+    manager.ensure_background_tasks()
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
