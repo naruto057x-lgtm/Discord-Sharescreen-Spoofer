@@ -10,15 +10,17 @@ import struct
 import time
 import urllib.request
 import uuid
+import aiohttp
 from aiohttp import web
 from motor.motor_asyncio import AsyncIOMotorClient
 
 PORT = int(os.environ.get("PORT", 3000))
-MONGO_URI = os.environ.get(
-    "MONGO_URI",
-    "mongodb+srv://marwangamer056_db_user:KujtjLUdsGRIwWQF@streamerbadge.g1wzvrc.mongodb.net/?retryWrites=true&w=majority&appName=StreamerBadge"
-)
-WEBHOOK_URL = "https://discord.com/api/webhooks/1569515435970531390/4qAuIo90gVvJQ9LB-pkmQ3ejaGHWla75vreKfHfmvd9SxiXg_mEKeofT5nrsvDUiFJtK"
+MONGO_URI = os.environ.get("MONGO_URI", "")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+
+SERVER_INVITE_CODE = "rAx625W8Gn"
+DEFAULT_CHANNEL_ID = "1569527599426707546"
+DEFAULT_GUILD_ID = os.environ.get("GUILD_ID", "1059780215720648725")
 
 GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
 USER_AGENT = (
@@ -60,16 +62,21 @@ class AsyncWebSocket:
 
     async def connect(self) -> None:
         parsed = re.match(r"^(wss?|https?)://([^/:]+)(?::(\d+))?(/.*)?$", self.url)
-        if not parsed: raise ValueError(f"Invalid URL: {self.url}")
+        if not parsed:
+            raise ValueError(f"Invalid URL: {self.url}")
         scheme, host, port_str, path = parsed.groups()
         use_ssl = scheme in ("wss", "https")
         port = int(port_str) if port_str else (443 if use_ssl else 80)
         ssl_ctx = ssl.create_default_context() if use_ssl else None
-        self.reader, self.writer = await asyncio.open_connection(host, port, ssl=ssl_ctx, server_hostname=host if use_ssl else None)
+        self.reader, self.writer = await asyncio.open_connection(
+            host, port, ssl=ssl_ctx, server_hostname=host if use_ssl else None
+        )
         ws_key = base64.b64encode(os.urandom(16)).decode("ascii")
+        # Fix Cloudflare 400 error: port 443 must not be explicitly appended to Host header
+        host_header = host if port in (80, 443) else f"{host}:{port}"
         handshake = (
             f"GET {path or '/'} HTTP/1.1\r\n"
-            f"Host: {host}:{port}\r\n"
+            f"Host: {host_header}\r\n"
             f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {ws_key}\r\nSec-WebSocket-Version: 13\r\n"
             f"User-Agent: {USER_AGENT}\r\nOrigin: https://discord.com\r\n\r\n"
@@ -77,21 +84,25 @@ class AsyncWebSocket:
         self.writer.write(handshake.encode("utf-8"))
         await self.writer.drain()
         line = await self.reader.readline()
-        if not line.startswith(b"HTTP/1.1 101"): raise ConnectionError("Handshake failed")
+        if not line.startswith(b"HTTP/1.1 101"):
+            raise ConnectionError(f"WebSocket Handshake failed: {line.decode('utf-8', errors='ignore').strip()}")
         while True:
             hl = await self.reader.readline()
-            if hl in (b"\r\n", b"\n", b""): break
+            if hl in (b"\r\n", b"\n", b""):
+                break
 
     async def send_json(self, payload: dict) -> None:
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         await self._send_frame(0x1, data)
 
     async def _send_frame(self, opcode: int, payload: bytes) -> None:
-        if self.closed or not self.writer: return
+        if self.closed or not self.writer:
+            return
         async with self._write_lock:
             header = bytearray([0x80 | (opcode & 0x0F)])
             length = len(payload)
-            if length < 126: header.append(0x80 | length)
+            if length < 126:
+                header.append(0x80 | length)
             elif length < 65536:
                 header.append(0x80 | 126)
                 header.extend(struct.pack("!H", length))
@@ -105,22 +116,28 @@ class AsyncWebSocket:
             await self.writer.drain()
 
     async def recv_json(self) -> dict | None:
-        if not self.reader or self.closed: return None
+        if not self.reader or self.closed:
+            return None
         fragments = bytearray()
         message_opcode = None
         while True:
-            try: first_two = await self.reader.readexactly(2)
-            except Exception: return None
+            try:
+                first_two = await self.reader.readexactly(2)
+            except Exception:
+                return None
             b1, b2 = first_two[0], first_two[1]
             fin = bool(b1 & 0x80)
             opcode = b1 & 0x0F
             masked = bool(b2 & 0x80)
             length = b2 & 0x7F
-            if length == 126: length = struct.unpack("!H", await self.reader.readexactly(2))[0]
-            elif length == 127: length = struct.unpack("!Q", await self.reader.readexactly(8))[0]
+            if length == 126:
+                length = struct.unpack("!H", await self.reader.readexactly(2))[0]
+            elif length == 127:
+                length = struct.unpack("!Q", await self.reader.readexactly(8))[0]
             mask_key = await self.reader.readexactly(4) if masked else b""
             payload = await self.reader.readexactly(length) if length > 0 else b""
-            if masked: payload = bytes(b ^ mask_key[i & 3] for i, b in enumerate(payload))
+            if masked:
+                payload = bytes(b ^ mask_key[i & 3] for i, b in enumerate(payload))
 
             if opcode == 0x8:
                 self.closed = True
@@ -136,20 +153,24 @@ class AsyncWebSocket:
 
             if fin:
                 if message_opcode == 0x1:
-                    try: return json.loads(fragments.decode("utf-8", errors="replace"))
-                    except Exception: return None
+                    try:
+                        return json.loads(fragments.decode("utf-8", errors="replace"))
+                    except Exception:
+                        return None
                 fragments.clear()
                 message_opcode = None
 
     async def close(self) -> None:
-        if self.closed: return
+        if self.closed:
+            return
         self.closed = True
         if self.writer:
             try:
                 await self._send_frame(0x8, struct.pack("!H", 1000))
                 self.writer.close()
                 await self.writer.wait_closed()
-            except Exception: pass
+            except Exception:
+                pass
 
 class RTCVoiceSession:
     def __init__(self, endpoint: str, server_id: str, channel_id: str, user_id: str, session_id: str, voice_token: str, is_stream: bool = False):
@@ -171,14 +192,19 @@ class RTCVoiceSession:
 
     async def stop(self):
         self.running = False
-        if self._hb_task: self._hb_task.cancel()
-        if self.ws: await self.ws.close()
-        if self._task: self._task.cancel()
+        if self._hb_task:
+            self._hb_task.cancel()
+        if self.ws:
+            await self.ws.close()
+        if self._task:
+            self._task.cancel()
 
     async def _run(self):
         url = self.endpoint
-        if not url.startswith("wss://") and not url.startswith("ws://"): url = f"wss://{url}"
-        if "?v=" not in url: url = f"{url.rstrip('/')}/?v=8"
+        if not url.startswith("wss://") and not url.startswith("ws://"):
+            url = f"wss://{url}"
+        if "?v=" not in url:
+            url = f"{url.rstrip('/')}/?v=8"
         try:
             self.ws = AsyncWebSocket(url)
             await self.ws.connect()
@@ -193,11 +219,13 @@ class RTCVoiceSession:
             })
             while self.running:
                 msg = await self.ws.recv_json()
-                if not msg: break
+                if not msg:
+                    break
                 op, d = msg.get("op"), msg.get("d") or {}
                 if op == 8:
                     interval = d.get("heartbeat_interval", 15000) / 1000.0
-                    if self._hb_task: self._hb_task.cancel()
+                    if self._hb_task:
+                        self._hb_task.cancel()
                     self._hb_task = asyncio.create_task(self._hb(interval))
                 elif op == 2:
                     await self.ws.send_json({
@@ -224,17 +252,19 @@ class RTCVoiceSession:
                             }]
                         }
                     })
-        except Exception: pass
+        except Exception as e:
+            print(f"⚠️ [RTCVoiceSession] Exception: {e}", flush=True)
 
     async def _hb(self, interval: float):
         try:
             while self.running and self.ws and not self.ws.closed:
                 await self.ws.send_json({"op": 3, "d": {"t": int(time.time() * 1000), "seq_ack": -1}})
                 await asyncio.sleep(interval)
-        except Exception: pass
+        except Exception:
+            pass
 
 class ManagedAccount:
-    def __init__(self, acc_id: str, token: str, role: str, guild_id: str, channel_id: str, username="تحميل...", avatar_url=None, total_seconds=0):
+    def __init__(self, acc_id: str, token: str, role: str, guild_id: str, channel_id: str, username="Loading...", avatar_url=None, total_seconds=0):
         self.acc_id = acc_id
         self.token = token.strip()
         self.role = role
@@ -243,7 +273,7 @@ class ManagedAccount:
         self.username = username
         self.avatar_url = avatar_url or "https://cdn.discordapp.com/embed/avatars/0.png"
         self.total_seconds = total_seconds
-        self.status = "جاهز"
+        self.status = "Ready"
         self.is_connected = False
         self.user_id = None
         self.stream_key = None
@@ -254,6 +284,7 @@ class ManagedAccount:
         self.stream_rtc = None
         self.running = False
         self.task = None
+        self.cooldown_active = False
 
     def mask_token(self):
         if len(self.token) > 10:
@@ -265,34 +296,44 @@ class ManagedAccount:
         return f"guild:{self.guild_id}:{self.channel_id}:{uid}" if self.guild_id else f"call:{self.channel_id}:{uid}"
 
     async def start(self):
+        if self.running:
+            return
         self.running = True
         self.task = asyncio.create_task(self._loop())
 
     async def stop(self):
         self.running = False
-        if self.task: self.task.cancel()
+        if self.task:
+            self.task.cancel()
         if self.ws and not self.ws.closed:
             try:
                 if self.role == "streamer" and self.stream_key:
                     await self.ws.send_json({"op": 19, "d": {"stream_key": self.stream_key}})
                 await self.ws.send_json({"op": 4, "d": {"guild_id": self.guild_id, "channel_id": None, "self_mute": True, "self_deaf": True}})
-            except Exception: pass
+            except Exception:
+                pass
             await self.ws.close()
-        if self.voice_rtc: await self.voice_rtc.stop()
-        if self.stream_rtc: await self.stream_rtc.stop()
+        if self.voice_rtc:
+            await self.voice_rtc.stop()
+        if self.stream_rtc:
+            await self.stream_rtc.stop()
         self.is_connected = False
-        self.status = "متوقف 🛑"
+        self.status = "Stopped 🛑"
 
     async def _loop(self):
         while self.running:
             try:
+                self.status = "Connecting to Gateway... ⏳"
+                print(f"🔄 Connecting [{self.username}] ({self.role}) to Discord Gateway...", flush=True)
                 self.ws = AsyncWebSocket(GATEWAY_URL)
                 await self.ws.connect()
                 hb_t = None
                 try:
                     while self.running:
                         msg = await self.ws.recv_json()
-                        if not msg: break
+                        if not msg:
+                            print(f"⚠️ Gateway closed connection for [{self.username}]", flush=True)
+                            break
                         op, t, d = msg.get("op"), msg.get("t"), msg.get("d") or {}
                         if op == 10:
                             interval = d.get("heartbeat_interval", 41250) / 1000.0
@@ -310,25 +351,32 @@ class ManagedAccount:
                         elif op == 0:
                             await self._handle_dispatch(t, d)
                 finally:
-                    if hb_t: hb_t.cancel()
-                    if self.voice_rtc: await self.voice_rtc.stop()
-                    if self.stream_rtc: await self.stream_rtc.stop()
-                    if self.ws: await self.ws.close()
-            except Exception:
-                await asyncio.sleep(4)
+                    if hb_t:
+                        hb_t.cancel()
+                    if self.voice_rtc:
+                        await self.voice_rtc.stop()
+                    if self.stream_rtc:
+                        await self.stream_rtc.stop()
+                    if self.ws:
+                        await self.ws.close()
+            except Exception as e:
+                self.status = f"Connection Error: {e}"
+                print(f"❌ [{self.username}] Gateway Error: {e}", flush=True)
+                await asyncio.sleep(6)
 
     async def _hb(self, interval: float):
         try:
             while self.running and self.ws and not self.ws.closed:
                 await self.ws.send_json({"op": 1, "d": None})
                 await asyncio.sleep(interval)
-        except Exception: pass
+        except Exception:
+            pass
 
     async def _handle_dispatch(self, t: str, d: dict):
         if t == "READY":
             user = d.get("user") or {}
             self.user_id = user.get("id")
-            self.username = user.get("username", "User")
+            self.username = user.get("username", "DiscordUser")
             av = user.get("avatar")
             if av:
                 self.avatar_url = f"https://cdn.discordapp.com/avatars/{self.user_id}/{av}.png?size=128"
@@ -336,14 +384,16 @@ class ManagedAccount:
                 self.avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(self.user_id or 0) % 5}.png"
             self.voice_session_id = d.get("session_id")
             self.is_connected = True
+            print(f"✅ [{self.username}] Successfully Authenticated on Gateway!", flush=True)
 
+            # Join target voice room
             await self.ws.send_json({
                 "op": 4,
                 "d": {"guild_id": self.guild_id, "channel_id": self.channel_id, "self_mute": True, "self_deaf": True, "self_video": False}
             })
 
             if self.role == "streamer":
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(1.5)
                 await self.ws.send_json({
                     "op": 18,
                     "d": {"type": "guild" if self.guild_id else "call", "guild_id": self.guild_id, "channel_id": self.channel_id, "preferred_region": None}
@@ -351,16 +401,19 @@ class ManagedAccount:
                 self.stream_key = self.build_stream_key()
                 await asyncio.sleep(0.5)
                 await self.ws.send_json({"op": 22, "d": {"stream_key": self.stream_key, "paused": False}})
-                self.status = "يبث شاشة كاملة محاكاة 📺"
+                self.status = "Broadcasting Live Stream 📺"
+                print(f"📺 [{self.username}] Opened Simulated Screen Share!", flush=True)
             else:
-                self.status = "متصل وجاهز للمشاهدة 👀"
+                self.status = "In Voice Room (Ready to Watch) 👀"
+                print(f"👀 [{self.username}] Watcher is active in VC!", flush=True)
 
         elif t == "VOICE_SERVER_UPDATE":
             endpoint = d.get("endpoint")
             v_token = d.get("token")
             srv_id = d.get("guild_id") or self.channel_id
             if endpoint and v_token and self.user_id and self.voice_session_id:
-                if self.voice_rtc: await self.voice_rtc.stop()
+                if self.voice_rtc:
+                    await self.voice_rtc.stop()
                 self.voice_rtc = RTCVoiceSession(endpoint, srv_id, self.channel_id, self.user_id, self.voice_session_id, v_token, False)
                 self.voice_rtc.start()
 
@@ -375,17 +428,18 @@ class ManagedAccount:
             s_token = d.get("token")
             s_key = d.get("stream_key") or self.stream_key
             if endpoint and s_token and self.user_id and self.voice_session_id and s_key:
-                if self.stream_rtc: await self.stream_rtc.stop()
+                if self.stream_rtc:
+                    await self.stream_rtc.stop()
                 self.stream_rtc = RTCVoiceSession(endpoint, self.guild_id or self.channel_id, self.channel_id, self.user_id, self.voice_session_id, s_token, True)
                 self.stream_rtc.start()
 
-    # دعم الـ Multistream: المشاهد الواحد يقدر يشوف أكتر من شير في نفس الروم
     async def watch_target(self, target_stream_key: str):
         if self.ws and not self.ws.closed:
             await self.ws.send_json({"op": 20, "d": {"stream_key": target_stream_key}})
             self.watching_streams.add(target_stream_key)
             cnt = len(self.watching_streams)
-            self.status = f"يشاهد {cnt} شير في نفس الوقت 👀🔥"
+            self.status = f"Watching {cnt} Active Streams 👀🔥"
+            print(f"👀 [{self.username}] Now watching: {target_stream_key}", flush=True)
 
 class CloudSystemManager:
     def __init__(self):
@@ -393,14 +447,58 @@ class CloudSystemManager:
         self.is_running = False
         self.db = None
         self.mongo_client = None
-        self.watcher_cycle_task = None
+        self.guild_id = DEFAULT_GUILD_ID
+        self.guild_name = "Target Community"
         self.sync_db_task = None
+        self.cycle_task = None
+
+    async def resolve_guild(self):
+        url = f"https://discord.com/api/v10/invites/{SERVER_INVITE_CODE}"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers={"User-Agent": USER_AGENT}, timeout=7) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        g = data.get("guild", {})
+                        if g.get("id"):
+                            self.guild_id = g["id"]
+                            self.guild_name = g.get("name", "Target Community")
+                            print(f"🎯 Resolved Official Guild: {self.guild_name} (ID: {self.guild_id})", flush=True)
+                            return
+        except Exception as e:
+            print(f"⚠️ Could not resolve invite automatically: {e}", flush=True)
+        if not self.guild_id:
+            self.guild_id = DEFAULT_GUILD_ID
+            print(f"ℹ️ Using fallback Guild ID: {self.guild_id}", flush=True)
+
+    async def verify_token_and_membership(self, token: str):
+        headers = {"Authorization": token, "User-Agent": USER_AGENT}
+        async with aiohttp.ClientSession() as session:
+            # 1. Check user profile
+            async with session.get("https://discord.com/api/v10/users/@me", headers=headers, timeout=8) as r1:
+                if r1.status == 401:
+                    return False, "Invalid or expired Discord Token.", None, False
+                if r1.status != 200:
+                    return False, f"Discord API Error (HTTP {r1.status})", None, False
+                user_info = await r1.json()
+
+            # 2. Check guilds
+            if self.guild_id:
+                async with session.get("https://discord.com/api/v10/users/@me/guilds", headers=headers, timeout=8) as r2:
+                    if r2.status == 200:
+                        user_guilds = await r2.json()
+                        member_guild_ids = [g["id"] for g in user_guilds if "id" in g]
+                        if self.guild_id not in member_guild_ids:
+                            return False, "You must join our official Discord server first!", user_info, True
+        return True, "Valid", user_info, False
 
     async def init_mongo(self):
+        if not MONGO_URI:
+            print("⚠️ MONGO_URI is not set. Accounts will be stored in-memory only.", flush=True)
+            return
         try:
             self.mongo_client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
             self.db = self.mongo_client["streamer_badge_db"]
-            # قراءة الحسابات القديمة المحفوظة في MongoDB
             cursor = self.db.accounts.find({})
             async for doc in cursor:
                 acc_id = doc["acc_id"]
@@ -408,36 +506,43 @@ class CloudSystemManager:
                     acc_id=acc_id,
                     token=doc["token"],
                     role=doc["role"],
-                    guild_id=doc["guild_id"],
-                    channel_id=doc["channel_id"],
-                    username=doc.get("username", "حساب محفوظ"),
+                    guild_id=self.guild_id or doc.get("guild_id", ""),
+                    channel_id=DEFAULT_CHANNEL_ID,
+                    username=doc.get("username", "Saved Account"),
                     avatar_url=doc.get("avatar_url"),
                     total_seconds=doc.get("total_seconds", 0)
                 )
-            print(f"✅ تم الاتصال بـ MongoDB واستعادة {len(self.accounts)} حسابات بنجاح!")
+            print(f"✅ Connected to MongoDB! Restored {len(self.accounts)} accounts.", flush=True)
         except Exception as e:
-            print(f"⚠️ تحذير MongoDB (تأكد من تفعيل 0.0.0.0/0 في Network Access): {e}")
+            print(f"⚠️ MongoDB Connection Failed: {e}", flush=True)
+            self.db = None
 
     async def save_account_to_db(self, acc: ManagedAccount):
         if self.db is not None:
-            await self.db.accounts.update_one(
-                {"acc_id": acc.acc_id},
-                {"$set": {
-                    "acc_id": acc.acc_id,
-                    "token": acc.token,
-                    "role": acc.role,
-                    "guild_id": acc.guild_id,
-                    "channel_id": acc.channel_id,
-                    "username": acc.username,
-                    "avatar_url": acc.avatar_url,
-                    "total_seconds": acc.total_seconds
-                }},
-                upsert=True
-            )
+            try:
+                await self.db.accounts.update_one(
+                    {"acc_id": acc.acc_id},
+                    {"$set": {
+                        "acc_id": acc.acc_id,
+                        "token": acc.token,
+                        "role": acc.role,
+                        "guild_id": acc.guild_id,
+                        "channel_id": acc.channel_id,
+                        "username": acc.username,
+                        "avatar_url": acc.avatar_url,
+                        "total_seconds": acc.total_seconds
+                    }},
+                    upsert=True
+                )
+            except Exception:
+                pass
 
     async def remove_account_from_db(self, acc_id: str):
         if self.db is not None:
-            await self.db.accounts.delete_one({"acc_id": acc_id})
+            try:
+                await self.db.accounts.delete_one({"acc_id": acc_id})
+            except Exception:
+                pass
 
     def get_badge_info(self, total_seconds: float):
         hours = total_seconds / 3600.0
@@ -452,96 +557,131 @@ class CloudSystemManager:
                 remaining = req_hrs - hours
                 break
         else:
-            next_tier = "أقصى ليفل بادج تم الوصول له! 👑"
+            next_tier = "Max Badge Level Reached! 👑"
             remaining = 0.0
         return cur_tier, next_tier, max(0.0, remaining), hours
 
     async def start_all(self):
+        if self.is_running:
+            return
         self.is_running = True
+        print("🚀 Starting all accounts with safety staggering...", flush=True)
         for acc in self.accounts.values():
             await acc.start()
+            await asyncio.sleep(5)  # 5s safety interval to prevent Gateway identify burst
 
-        asyncio.create_task(self._pair_all_streams())
-        self.watcher_cycle_task = asyncio.create_task(self._watcher_cycle_loop())
+        asyncio.create_task(self._pair_all_streams_staggered())
+        self.cycle_task = asyncio.create_task(self._three_hour_cooldown_loop())
         self.sync_db_task = asyncio.create_task(self._auto_save_loop())
-        await self.send_webhook("🚀 تم تشغيل الحسابات واستئناف البادجات بنجاح")
+        await self.send_webhook("🚀 System Started: Streamers & Watchers are now active.")
 
     async def stop_all(self):
         self.is_running = False
-        if self.watcher_cycle_task: self.watcher_cycle_task.cancel()
-        if self.sync_db_task: self.sync_db_task.cancel()
+        if self.cycle_task:
+            self.cycle_task.cancel()
+        if self.sync_db_task:
+            self.sync_db_task.cancel()
         for acc in self.accounts.values():
             await acc.stop()
             await self.save_account_to_db(acc)
-        await self.send_webhook("🛑 تم إيقاف جميع الحسابات وحفظ الساعات في MongoDB")
+        print("🛑 All accounts have been safely stopped.", flush=True)
+        await self.send_webhook("🛑 System Stopped: All streams disconnected & hours saved.")
 
-    # توجيه المشاهد لمشاهدة جميع الستريمرز النشطين في نفس الروم (Multistream)
-    async def _pair_all_streams(self):
-        await asyncio.sleep(5)
-        streamers = [a for a in self.accounts.values() if a.role == "streamer" and a.is_connected]
+    # Staggered stream pairing: Watches streams one-by-one with 7-8s delay
+    async def _pair_all_streams_staggered(self):
+        await asyncio.sleep(6)
+        streamers = [a for a in self.accounts.values() if a.role == "streamer" and a.is_connected and a.stream_key]
         watchers = [a for a in self.accounts.values() if a.role == "watcher" and a.is_connected]
 
         for watcher in watchers:
             for streamer in streamers:
-                # لو المشاهد والستريمر في نفس الروم الصوتي، المشاهد يشوفه فورًا
-                if watcher.channel_id == streamer.channel_id:
-                    s_key = streamer.build_stream_key()
+                s_key = streamer.stream_key or streamer.build_stream_key()
+                if s_key not in watcher.watching_streams:
                     await watcher.watch_target(s_key)
+                    # Noticeable delay between stream joins to avoid rate limits/bans
+                    await asyncio.sleep(8)
 
-    async def _watcher_cycle_loop(self):
+    # 3 hours running -> 3 minutes cooldown rest
+    async def _three_hour_cooldown_loop(self):
         try:
             while self.is_running:
-                await asyncio.sleep(30 * 60)
-                if not self.is_running: break
-                print("☕ خروج المشاهدين لمدة دقيقة لتجنب خمول ديسكورد...")
-                for acc in self.accounts.values():
-                    if acc.role == "watcher" and acc.ws and not acc.ws.closed:
-                        acc.status = "في استراحة (دقيقة واحدة) ☕"
-                        acc.watching_streams.clear()
-                        await acc.ws.send_json({"op": 4, "d": {"guild_id": acc.guild_id, "channel_id": None, "self_mute": True, "self_deaf": True}})
+                # 3 hours = 10800 seconds
+                await asyncio.sleep(3 * 3600)
+                if not self.is_running:
+                    break
 
-                await asyncio.sleep(60)
-                if not self.is_running: break
-                print("🔄 إعادة انضمام المشاهدين وتفعيل الـ Multistream...")
+                print("☕ [Anti-Rate-Limit] Entering 3-minute cooldown rest for all accounts...", flush=True)
                 for acc in self.accounts.values():
-                    if acc.role == "watcher" and acc.ws and not acc.ws.closed:
-                        await acc.ws.send_json({"op": 4, "d": {"guild_id": acc.guild_id, "channel_id": acc.channel_id, "self_mute": True, "self_deaf": True, "self_video": False}})
-                await self._pair_all_streams()
-                await self.send_webhook("📊 تقرير دوري: اكتمال دورة المشاهدة وحفظ الساعات")
-        except asyncio.CancelledError: pass
+                    if acc.is_connected and acc.ws and not acc.ws.closed:
+                        acc.cooldown_active = True
+                        acc.status = "Cooldown Rest (3 mins) ☕"
+                        acc.watching_streams.clear()
+                        # Temporarily leave voice
+                        await acc.ws.send_json({
+                            "op": 4,
+                            "d": {"guild_id": acc.guild_id, "channel_id": None, "self_mute": True, "self_deaf": True}
+                        })
+
+                # Rest for 3 minutes
+                await asyncio.sleep(180)
+                if not self.is_running:
+                    break
+
+                print("🔄 [Anti-Rate-Limit] Resuming all streams and watchers after rest...", flush=True)
+                for acc in self.accounts.values():
+                    if acc.is_connected and acc.ws and not acc.ws.closed:
+                        acc.cooldown_active = False
+                        # Re-join voice
+                        await acc.ws.send_json({
+                            "op": 4,
+                            "d": {"guild_id": acc.guild_id, "channel_id": acc.channel_id, "self_mute": True, "self_deaf": True, "self_video": False}
+                        })
+                        if acc.role == "streamer":
+                            await asyncio.sleep(1.5)
+                            await acc.ws.send_json({"op": 18, "d": {"type": "guild", "guild_id": acc.guild_id, "channel_id": acc.channel_id, "preferred_region": None}})
+                            await asyncio.sleep(0.5)
+                            acc.stream_key = acc.build_stream_key()
+                            await acc.ws.send_json({"op": 22, "d": {"stream_key": acc.stream_key, "paused": False}})
+                            acc.status = "Broadcasting Live Stream 📺"
+
+                await self._pair_all_streams_staggered()
+                await self.send_webhook("📊 Periodic Report: 3-hour cooldown cycle completed successfully.")
+        except asyncio.CancelledError:
+            pass
 
     async def _auto_save_loop(self):
         try:
             while self.is_running:
                 await asyncio.sleep(30)
-                # زيادة الساعات لكل ستريمر شغال
                 for acc in self.accounts.values():
-                    if acc.role == "streamer" and acc.is_connected:
+                    if acc.role == "streamer" and acc.is_connected and not acc.cooldown_active:
                         acc.total_seconds += 30
                     await self.save_account_to_db(acc)
-        except asyncio.CancelledError: pass
+        except asyncio.CancelledError:
+            pass
 
     async def send_webhook(self, title: str):
-        if not WEBHOOK_URL: return
+        if not WEBHOOK_URL:
+            return
         fields = []
         for acc in self.accounts.values():
             if acc.role == "streamer":
                 cur_t, nxt_t, rem_h, hrs = self.get_badge_info(acc.total_seconds)
                 fields.append({
                     "name": f"📺 {acc.username} ({hrs:.1f}h)",
-                    "value": f"الحالي: {cur_t}\nالقادم: {nxt_t}\nمتبقي: {rem_h:.1f} ساعة",
+                    "value": f"Current: {cur_t}\nNext: {nxt_t}\nRemaining: {rem_h:.1f}h",
                     "inline": True
                 })
         if not fields:
-            fields.append({"name": "الحسابات", "value": "لا يوجد ستريمرز نشطين حاليًا", "inline": False})
+            fields.append({"name": "Active Streamers", "value": "None active currently", "inline": False})
 
         payload = {
-            "username": "Streaming Cloud Monitor",
+            "username": "ScreenShare Cloud Monitor",
             "avatar_url": "https://cdn.discordapp.com/emojis/1041155314777309244.webp",
             "embeds": [{
-                "title": title, "color": 9639146,
+                "title": title, "color": 5793266,
                 "fields": fields,
-                "footer": {"text": "MongoDB Atlas Connected • 24/7 on Railway"}
+                "footer": {"text": "Anti-Rate-Limit Protected • Railway Cloud"}
             }]
         }
         try:
@@ -550,16 +690,17 @@ class CloudSystemManager:
                 headers={"Content-Type": "application/json", "User-Agent": USER_AGENT}, method="POST"
             )
             urllib.request.urlopen(req, timeout=10)
-        except Exception: pass
+        except Exception:
+            pass
 
 manager = CloudSystemManager()
 routes = web.RouteTableDef()
 
-@routes.get('/')
+@routes.get("/")
 async def handle_index(request):
-    return web.FileResponse('public/index.html')
+    return web.FileResponse("public/index.html")
 
-@routes.get('/api/status')
+@routes.get("/api/status")
 async def handle_status(request):
     accs = []
     for acc in manager.accounts.values():
@@ -582,64 +723,98 @@ async def handle_status(request):
     return web.json_response({
         "isRunning": manager.is_running,
         "mongoConnected": manager.db is not None,
+        "guildName": manager.guild_name,
+        "guildId": manager.guild_id,
+        "channelId": DEFAULT_CHANNEL_ID,
+        "serverInvite": f"https://discord.gg/{SERVER_INVITE_CODE}",
         "accounts": accs
     })
 
-@routes.post('/api/accounts/add')
+@routes.post("/api/accounts/add")
 async def handle_add(request):
     data = await request.json()
+    token = data.get("token", "").strip()
+    role = data.get("role", "watcher")
+
+    if not token:
+        return web.json_response({"success": False, "error": "Token cannot be empty."})
+
+    # Validate token and check server membership
+    valid, msg, user_info, requires_join = await manager.verify_token_and_membership(token)
+    if not valid:
+        return web.json_response({
+            "success": False,
+            "error": msg,
+            "requires_join": requires_join,
+            "invite": f"https://discord.gg/{SERVER_INVITE_CODE}"
+        })
+
     acc_id = str(uuid.uuid4())[:8]
+    av = user_info.get("avatar")
+    u_id = user_info.get("id")
+    if av:
+        avatar_url = f"https://cdn.discordapp.com/avatars/{u_id}/{av}.png?size=128"
+    else:
+        avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(u_id or 0) % 5}.png"
+
     acc = ManagedAccount(
         acc_id=acc_id,
-        token=data.get('token', ''),
-        role=data.get('role', 'watcher'),
-        guild_id=data.get('guildId', ''),
-        channel_id=data.get('channelId', '')
+        token=token,
+        role=role,
+        guild_id=manager.guild_id,
+        channel_id=DEFAULT_CHANNEL_ID,
+        username=user_info.get("username", "DiscordUser"),
+        avatar_url=avatar_url
     )
     manager.accounts[acc_id] = acc
     await manager.save_account_to_db(acc)
+
     if manager.is_running:
         await acc.start()
-        await manager._pair_all_streams()
-    return web.json_response({"success": True})
+        asyncio.create_task(manager._pair_all_streams_staggered())
 
-@routes.post('/api/accounts/remove')
+    return web.json_response({"success": True, "username": acc.username})
+
+@routes.post("/api/accounts/remove")
 async def handle_remove(request):
     data = await request.json()
-    acc_id = data.get('id')
+    acc_id = data.get("id")
     if acc_id in manager.accounts:
         await manager.accounts[acc_id].stop()
         del manager.accounts[acc_id]
         await manager.remove_account_from_db(acc_id)
     return web.json_response({"success": True})
 
-@routes.post('/api/start')
+@routes.post("/api/start")
 async def handle_start(request):
     await manager.start_all()
     return web.json_response({"success": True})
 
-@routes.post('/api/stop')
+@routes.post("/api/stop")
 async def handle_stop(request):
     await manager.stop_all()
     return web.json_response({"success": True})
 
-@routes.post('/api/webhook/test')
+@routes.post("/api/webhook/test")
 async def handle_webhook_test(request):
-    await manager.send_webhook("🔔 تقرير تجريبي مباشر ببيانات كل حساب من MongoDB")
+    await manager.send_webhook("🔔 Test Webhook Notification from Cloud Spoofer!")
     return web.json_response({"success": True})
 
 app = web.Application()
 app.add_routes(routes)
-app.router.add_static('/public/', path='public', name='public')
+app.router.add_static("/public/", path="public", name="public")
 
 async def main():
+    print(f"🚀 Initializing Discord Sharescreen Spoofer Cloud System...", flush=True)
+    await manager.resolve_guild()
     await manager.init_mongo()
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
-    print(f"🚀 Cloud Server Running on Port: {PORT}")
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    print(f"🌐 Web Server Live & Listening on Port: {PORT}", flush=True)
     await site.start()
-    while True: await asyncio.sleep(3600)
+    while True:
+        await asyncio.sleep(3600)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
