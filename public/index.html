@@ -1,123 +1,392 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Discord Cloud Badge Hub</title>
+  <title>Discord ScreenShare Spoofer | Cloud Badge Booster</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <style>
-    body { font-family: 'Cairo', sans-serif; background-color: #060911; }
-    .glass { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(14px); border: 1px solid rgba(255, 255, 255, 0.07); }
-    .glow-cyan { box-shadow: 0 0 25px rgba(6, 182, 212, 0.2); }
+    body { background-color: #0b0e14; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .card-glass { background: rgba(22, 27, 34, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    .glow-purple { box-shadow: 0 0 25px -5px rgba(139, 92, 246, 0.35); }
+    .glow-green { box-shadow: 0 0 25px -5px rgba(34, 197, 94, 0.35); }
+    .custom-scroll::-webkit-scrollbar { width: 6px; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 4px; }
   </style>
 </head>
-<body class="text-slate-100 min-h-screen p-4 md:p-8 flex flex-col items-center">
+<body class="min-h-screen p-4 md:p-8 flex flex-col justify-between">
 
-  <!-- Header -->
-  <header class="w-full max-w-6xl flex flex-wrap justify-between items-center gap-4 mb-6 glass p-5 rounded-3xl glow-cyan">
-    <div class="flex items-center gap-3">
-      <div class="w-12 h-12 rounded-2xl bg-cyan-600/30 border border-cyan-500/40 flex items-center justify-center text-2xl shadow-lg">☁️</div>
-      <div>
-        <h1 class="text-xl md:text-2xl font-black bg-gradient-to-r from-cyan-400 via-indigo-300 to-purple-400 bg-clip-text text-transparent">
-          Discord Badge Hub • MongoDB Edition
-        </h1>
-        <p class="text-xs text-slate-400">حفظ سحابي دائم 24/7 مع حماية التوكنات ودعم المشاهد المتعدد</p>
+  <div class="max-w-6xl mx-auto w-full space-y-6">
+
+    <!-- Header Bar -->
+    <header class="card-glass rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-4 border-b border-indigo-500/20">
+      <div class="flex items-center gap-4">
+        <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white text-2xl shadow-lg glow-purple">
+          <i class="fa-solid fa-satellite-dish"></i>
+        </div>
+        <div>
+          <h1 class="text-2xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400 bg-clip-text text-transparent">
+            Discord ScreenShare Spoofer
+          </h1>
+          <p class="text-xs text-gray-400 flex items-center gap-2 mt-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+            Cloud Badge Farming Engine • Anti-Rate-Limit Protected
+          </p>
+        </div>
       </div>
-    </div>
 
-    <!-- MongoDB Status -->
-    <div class="flex items-center gap-2 glass px-4 py-2 rounded-2xl border border-emerald-500/30">
-      <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-      <span class="text-xs font-bold text-emerald-300">MongoDB Atlas: متصل ومؤمّن</span>
-    </div>
-  </header>
-
-  <main class="w-full max-w-6xl space-y-6">
-
-    <!-- شريط التحكم السريع -->
-    <div class="glass p-5 rounded-3xl flex flex-wrap justify-between items-center gap-4">
-      <div class="flex gap-3">
-        <button onclick="startAll()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 px-6 py-2.5 rounded-2xl text-xs font-black shadow-lg shadow-emerald-600/30 transition">
-          تشغيل كل الحسابات 🚀
-        </button>
-        <button onclick="stopAll()" class="bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 px-6 py-2.5 rounded-2xl text-xs font-black transition">
-          إيقاف وحفظ الساعات 🛑
+      <div class="flex items-center gap-3">
+        <a id="serverInviteBtn" href="https://discord.gg/rAx625W8Gn" target="_blank" class="px-4 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-2 transition-all">
+          <i class="fa-brands fa-discord"></i> Official Server
+        </a>
+        <button onclick="testWebhook()" class="px-4 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-2 transition-all border border-gray-700">
+          <i class="fa-solid fa-bell"></i> Test Webhook
         </button>
       </div>
-      <button onclick="sendTestWebhook()" class="bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/30 px-4 py-2 rounded-2xl text-xs font-bold transition">
-        إرسال تقرير للديسكورد (Webhook) 🔔
-      </button>
-    </div>
+    </header>
 
-    <!-- فورم إضافة حساب جديد -->
-    <div class="glass p-6 rounded-3xl">
-      <h2 class="text-sm font-bold text-cyan-300 mb-4 flex items-center gap-2">
-        <span>➕</span> إضافة حساب جديد (ستريمر أو مشاهد)
-      </h2>
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <div>
-          <label class="block text-[11px] text-slate-400 mb-1">نوع الحساب</label>
-          <select id="accRole" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
-            <option value="streamer">بث شاشة (Streamer) 📺</option>
-            <option value="watcher" selected>مشاهد شاشات (Watcher) 👀</option>
-          </select>
+    <!-- Top Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="card-glass rounded-xl p-4 flex items-center gap-4">
+        <div class="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-power-off"></i>
         </div>
         <div>
-          <label class="block text-[11px] text-slate-400 mb-1">توكن الحساب (محمي ومخفي)</label>
-          <input type="password" id="accToken" placeholder="ضع التوكن هنا (مخفي تمامًا)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
-        </div>
-        <div>
-          <label class="block text-[11px] text-slate-400 mb-1">آيدي السيرفر (Server ID)</label>
-          <input type="text" id="accGuild" placeholder="Server ID" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
-        </div>
-        <div>
-          <label class="block text-[11px] text-slate-400 mb-1">آيدي الروم الصوتي (Voice ID)</label>
-          <input type="text" id="accChannel" placeholder="Voice Channel ID" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
+          <span class="text-xs text-gray-400 block font-medium">System Status</span>
+          <span id="systemStatusBadge" class="text-sm font-bold text-gray-300">Checking...</span>
         </div>
       </div>
-      <div class="mt-4 text-left">
-        <button onclick="addAccount()" class="bg-cyan-600 hover:bg-cyan-500 px-6 py-2 rounded-xl text-xs font-bold transition">
-          حفظ الحساب في MongoDB 💾
+
+      <div class="card-glass rounded-xl p-4 flex items-center gap-4">
+        <div class="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-database"></i>
+        </div>
+        <div>
+          <span class="text-xs text-gray-400 block font-medium">Database</span>
+          <span id="mongoStatusBadge" class="text-sm font-bold text-gray-300">Checking...</span>
+        </div>
+      </div>
+
+      <div class="card-glass rounded-xl p-4 flex items-center gap-4">
+        <div class="w-10 h-10 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-video"></i>
+        </div>
+        <div>
+          <span class="text-xs text-gray-400 block font-medium">Streamers</span>
+          <span id="streamerCount" class="text-sm font-bold text-white">0</span>
+        </div>
+      </div>
+
+      <div class="card-glass rounded-xl p-4 flex items-center gap-4">
+        <div class="w-10 h-10 rounded-lg bg-pink-500/10 text-pink-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-eye"></i>
+        </div>
+        <div>
+          <span class="text-xs text-gray-400 block font-medium">Watchers</span>
+          <span id="watcherCount" class="text-sm font-bold text-white">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Left Column: Add Account & Server Info -->
+      <div class="space-y-6">
+
+        <!-- Locked Server Information Card -->
+        <div class="card-glass rounded-2xl p-6 border border-indigo-500/30">
+          <h2 class="text-sm font-bold text-indigo-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <i class="fa-solid fa-shield-halved"></i> Configured Target Room
+          </h2>
+          <div class="space-y-2 text-xs">
+            <div class="flex justify-between py-1.5 border-b border-gray-800">
+              <span class="text-gray-400">Server:</span>
+              <span id="targetServerName" class="text-white font-semibold">Official Discord Server</span>
+            </div>
+            <div class="flex justify-between py-1.5 border-b border-gray-800">
+              <span class="text-gray-400">Voice Channel ID:</span>
+              <span class="text-indigo-400 font-mono">1569527599426707546</span>
+            </div>
+            <div class="flex justify-between py-1.5">
+              <span class="text-gray-400">Anti-Rate-Limit Cycle:</span>
+              <span class="text-emerald-400 font-semibold">3h Active / 3m Rest</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add Account Card -->
+        <div class="card-glass rounded-2xl p-6 space-y-4">
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <i class="fa-solid fa-plus-circle text-indigo-400"></i> Add Account
+          </h2>
+
+          <form id="addAccountForm" onsubmit="addAccount(event)" class="space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-gray-400 mb-1.5">User Discord Token</label>
+              <div class="relative">
+                <input id="tokenInput" type="password" required placeholder="Paste user token here..."
+                  class="w-full bg-gray-900/80 border border-gray-700 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 pr-10">
+                <button type="button" onclick="toggleTokenVisibility()" class="absolute right-3 top-2.5 text-gray-500 hover:text-gray-300 text-xs">
+                  <i id="eyeIcon" class="fa-solid fa-eye"></i>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-gray-400 mb-1.5">Account Role</label>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="cursor-pointer">
+                  <input type="radio" name="role" value="streamer" class="peer hidden" checked>
+                  <div class="p-3 text-center rounded-xl bg-gray-900/60 border border-gray-800 peer-checked:border-purple-500 peer-checked:bg-purple-900/20 text-xs font-semibold text-gray-300 peer-checked:text-purple-300 transition-all">
+                    <i class="fa-solid fa-video block mb-1 text-base"></i> Streamer
+                  </div>
+                </label>
+                <label class="cursor-pointer">
+                  <input type="radio" name="role" value="watcher" class="peer hidden">
+                  <div class="p-3 text-center rounded-xl bg-gray-900/60 border border-gray-800 peer-checked:border-pink-500 peer-checked:bg-pink-900/20 text-xs font-semibold text-gray-300 peer-checked:text-pink-300 transition-all">
+                    <i class="fa-solid fa-eye block mb-1 text-base"></i> Watcher
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <button id="addSubmitBtn" type="submit" class="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2">
+              <i class="fa-solid fa-bolt"></i> Verify & Connect
+            </button>
+          </form>
+
+          <p id="formFeedback" class="text-xs text-center font-medium hidden"></p>
+        </div>
+
+        <!-- Master Actions -->
+        <div class="card-glass rounded-2xl p-6 flex flex-col gap-3">
+          <button id="masterToggleBtn" onclick="toggleSystem()" class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2">
+            <i class="fa-solid fa-play"></i> Start All Accounts
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Right Column: Connected Accounts List -->
+      <div class="lg:col-span-2 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <i class="fa-solid fa-users text-indigo-400"></i> Active Farm Accounts
+          </h2>
+          <span id="totalAccountCount" class="text-xs text-gray-400">0 Accounts Configured</span>
+        </div>
+
+        <!-- Account Cards Container -->
+        <div id="accountsList" class="space-y-3 custom-scroll max-h-[750px] overflow-y-auto pr-1">
+          <div class="card-glass rounded-xl p-8 text-center text-gray-500 text-xs">
+            <i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2 text-indigo-500"></i>
+            <p>Loading accounts from cloud database...</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Modal: Server Membership Alert -->
+  <div id="membershipModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="card-glass rounded-2xl max-w-md w-full p-6 text-center space-y-4 border border-indigo-500/40">
+      <div class="w-16 h-16 rounded-full bg-indigo-600/20 text-indigo-400 mx-auto flex items-center justify-center text-3xl">
+        <i class="fa-brands fa-discord"></i>
+      </div>
+      <h3 class="text-lg font-bold text-white">Server Membership Required!</h3>
+      <p class="text-xs text-gray-300 leading-relaxed">
+        This account is not a member of our official Discord community. To activate screen share spoofing and badge farming, you must join the server first.
+      </p>
+      <div class="flex gap-3 pt-2">
+        <button onclick="closeModal()" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">
+          Cancel
         </button>
+        <a id="modalInviteBtn" href="https://discord.gg/rAx625W8Gn" target="_blank" onclick="closeModal()" class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center justify-center gap-2">
+          <i class="fa-solid fa-arrow-up-right-from-square"></i> Join Server
+        </a>
       </div>
     </div>
+  </div>
 
-    <!-- كروت الحسابات النشطة -->
-    <div>
-      <h2 class="text-sm font-bold text-slate-300 mb-3 flex items-center gap-2">
-        <span>👥</span> الحسابات المسجلة وحالة كل حساب
-      </h2>
-      <div id="accountsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <!-- الكروت هتتولد هنا تلقائيًا -->
-      </div>
-    </div>
-
-  </main>
+  <footer class="mt-8 text-center text-[11px] text-gray-500">
+    Discord ScreenShare Cloud Engine • 24/7 Auto-Rotation & Multi-Stream Support
+  </footer>
 
   <script>
-    async function addAccount() {
-      const payload = {
-        role: document.getElementById('accRole').value,
-        token: document.getElementById('accToken').value,
-        guildId: document.getElementById('accGuild').value,
-        channelId: document.getElementById('accChannel').value
-      };
-      if (!payload.token || !payload.channelId) {
-        alert('من فضلك أدخل التوكن وآيدي الروم');
+    let isSystemRunning = false;
+
+    function toggleTokenVisibility() {
+      const input = document.getElementById('tokenInput');
+      const icon = document.getElementById('eyeIcon');
+      if (input.type === 'password') {
+        input.type = 'text';
+        icon.classList.replace('fa-eye', 'fa-eye-slash');
+      } else {
+        input.type = 'password';
+        icon.classList.replace('fa-eye-slash', 'fa-eye');
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('membershipModal').classList.add('hidden');
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        isSystemRunning = data.isRunning;
+
+        // Update system status
+        const sysBadge = document.getElementById('systemStatusBadge');
+        if (data.isRunning) {
+          sysBadge.innerHTML = '<span class="text-emerald-400">RUNNING ⚡</span>';
+          document.getElementById('masterToggleBtn').innerHTML = '<i class="fa-solid fa-stop"></i> Stop All Accounts';
+          document.getElementById('masterToggleBtn').className = 'w-full py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2';
+        } else {
+          sysBadge.innerHTML = '<span class="text-gray-400">IDLE 🛑</span>';
+          document.getElementById('masterToggleBtn').innerHTML = '<i class="fa-solid fa-play"></i> Start All Accounts';
+          document.getElementById('masterToggleBtn').className = 'w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2';
+        }
+
+        // Update DB status
+        const dbBadge = document.getElementById('mongoStatusBadge');
+        dbBadge.innerHTML = data.mongoConnected
+          ? '<span class="text-emerald-400">CONNECTED</span>'
+          : '<span class="text-amber-400">IN-MEMORY</span>';
+
+        if (data.guildName) {
+          document.getElementById('targetServerName').innerText = data.guildName;
+        }
+
+        renderAccounts(data.accounts || []);
+      } catch (err) {
+        console.error('Poll Error:', err);
+      }
+    }
+
+    function renderAccounts(accounts) {
+      const container = document.getElementById('accountsList');
+      document.getElementById('totalAccountCount').innerText = `${accounts.length} Accounts Configured`;
+
+      let streamers = 0, watchers = 0;
+      accounts.forEach(a => a.role === 'streamer' ? streamers++ : watchers++);
+      document.getElementById('streamerCount').innerText = streamers;
+      document.getElementById('watcherCount').innerText = watchers;
+
+      if (accounts.length === 0) {
+        container.innerHTML = `
+          <div class="card-glass rounded-xl p-8 text-center text-gray-500 text-xs">
+            <i class="fa-solid fa-ghost text-3xl mb-2 text-gray-600"></i>
+            <p>No accounts connected yet. Add a streamer or watcher on the left!</p>
+          </div>
+        `;
         return;
       }
-      await fetch('/api/accounts/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      document.getElementById('accToken').value = '';
-      poll();
+
+      container.innerHTML = accounts.map(acc => {
+        const isStreamer = acc.role === 'streamer';
+        const roleColor = isStreamer ? 'purple' : 'pink';
+        const progressPercent = Math.min(100, (acc.totalHours / 100) * 100);
+
+        return `
+          <div class="card-glass rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 border-l-4 border-${roleColor}-500 transition-all hover:bg-gray-800/40">
+            <div class="flex items-center gap-3 w-full md:w-auto">
+              <img src="${acc.avatar}" class="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-gray-900" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-bold text-white">${acc.username}</span>
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-${roleColor}-500/20 text-${roleColor}-300 border border-${roleColor}-500/30">
+                    ${acc.role}
+                  </span>
+                </div>
+                <div class="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
+                  <span>${acc.maskedToken}</span> •
+                  <span class="font-medium text-indigo-300">${acc.status}</span>
+                </div>
+              </div>
+            </div>
+
+            ${isStreamer ? `
+              <div class="w-full md:w-56 space-y-1">
+                <div class="flex justify-between text-[11px] font-semibold">
+                  <span class="text-indigo-400">${acc.currentTier}</span>
+                  <span class="text-gray-400">${acc.totalHours}h total</span>
+                </div>
+                <div class="w-full h-1.5 bg-gray-900 rounded-full overflow-hidden">
+                  <div class="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full" style="width: ${progressPercent}%"></div>
+                </div>
+                <div class="text-[10px] text-gray-500 text-right">
+                  Next: ${acc.nextTier} (${acc.remainingHours}h left)
+                </div>
+              </div>
+            ` : `
+              <div class="text-xs text-gray-400 italic">
+                Active Multi-Stream Viewer
+              </div>
+            `}
+
+            <button onclick="removeAccount('${acc.id}')" class="text-gray-500 hover:text-rose-400 p-2 text-sm transition-all" title="Remove Account">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function addAccount(e) {
+      e.preventDefault();
+      const token = document.getElementById('tokenInput').value.trim();
+      const role = document.querySelector('input[name="role"]:checked').value;
+      const feedback = document.getElementById('formFeedback');
+      const submitBtn = document.getElementById('addSubmitBtn');
+
+      if (!token) return;
+
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Verifying...';
+      feedback.className = 'text-xs text-center font-medium block text-indigo-400';
+      feedback.innerText = 'Connecting to Discord API...';
+
+      try {
+        const res = await fetch('/api/accounts/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, role })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          document.getElementById('tokenInput').value = '';
+          feedback.className = 'text-xs text-center font-medium block text-emerald-400';
+          feedback.innerText = `Connected successfully as ${data.username}!`;
+          poll();
+          setTimeout(() => feedback.classList.add('hidden'), 4000);
+        } else {
+          if (data.requires_join) {
+            feedback.classList.add('hidden');
+            document.getElementById('membershipModal').classList.remove('hidden');
+          } else {
+            feedback.className = 'text-xs text-center font-medium block text-rose-400';
+            feedback.innerText = data.error || 'Failed to add account.';
+          }
+        }
+      } catch (err) {
+        feedback.className = 'text-xs text-center font-medium block text-rose-400';
+        feedback.innerText = 'Network request failed. Try again.';
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> Verify & Connect';
+      }
     }
 
     async function removeAccount(id) {
-      if (!confirm('متأكد إنك عايز تحذف الحساب ده من MongoDB؟')) return;
+      if (!confirm('Are you sure you want to remove this account?')) return;
       await fetch('/api/accounts/remove', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -126,84 +395,18 @@
       poll();
     }
 
-    async function startAll() {
-      await fetch('/api/start', { method: 'POST' });
+    async function toggleSystem() {
+      const endpoint = isSystemRunning ? '/api/stop' : '/api/start';
+      await fetch(endpoint, { method: 'POST' });
       poll();
     }
 
-    async function stopAll() {
-      await fetch('/api/stop', { method: 'POST' });
-      poll();
-    }
-
-    async function sendTestWebhook() {
+    async function testWebhook() {
       await fetch('/api/webhook/test', { method: 'POST' });
-      alert('تم إرسال تقرير الحسابات لقناة الديسكورد بنجاح! 🔔');
+      alert('Test webhook notification sent!');
     }
 
-    async function poll() {
-      try {
-        const res = await fetch('/api/status');
-        const data = await res.json();
-        const grid = document.getElementById('accountsGrid');
-
-        if (!data.accounts || data.accounts.length === 0) {
-          grid.innerHTML = `<div class="col-span-full py-8 text-center glass rounded-3xl text-slate-500 text-xs">مفيش حسابات مضافة حاليًا. ضيف أول حساب فوق وهيتسجل في MongoDB فورًا!</div>`;
-          return;
-        }
-
-        grid.innerHTML = data.accounts.map(acc => `
-          <div class="glass p-5 rounded-3xl border border-slate-800 flex flex-col justify-between">
-            <div>
-              <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center gap-3">
-                  <img src="${acc.avatar}" class="w-11 h-11 rounded-2xl border border-slate-700 object-cover shadow-md" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
-                  <div>
-                    <div class="font-bold text-sm text-slate-100">${acc.username}</div>
-                    <div class="text-[10px] font-mono text-slate-500">${acc.maskedToken}</div>
-                  </div>
-                </div>
-                <span class="px-2.5 py-1 rounded-xl text-[10px] font-black ${acc.role === 'streamer' ? 'bg-purple-900/60 text-purple-300 border border-purple-500/30' : 'bg-cyan-900/60 text-cyan-300 border border-cyan-500/30'}">
-                  ${acc.role === 'streamer' ? 'ستريمر 📺' : 'مشاهد 👀'}
-                </span>
-              </div>
-
-              <div class="space-y-2 mt-4 text-xs">
-                <div class="flex justify-between items-center text-slate-400">
-                  <span>الحالة:</span>
-                  <span class="font-semibold ${acc.connected ? 'text-emerald-400' : 'text-slate-400'}">${acc.status}</span>
-                </div>
-                ${acc.role === 'streamer' ? `
-                  <div class="flex justify-between items-center text-slate-400">
-                    <span>البادج الحالي:</span>
-                    <span class="font-bold text-indigo-300">${acc.currentTier}</span>
-                  </div>
-                  <div class="flex justify-between items-center text-slate-400">
-                    <span>الهدف القادم:</span>
-                    <span class="text-pink-400 font-semibold">${acc.nextTier}</span>
-                  </div>
-                  <div class="flex justify-between items-center text-slate-400">
-                    <span>الساعات المسجلة:</span>
-                    <span class="text-cyan-300 font-black">${acc.totalHours} ساعة (باقي: ${acc.remainingHours}h)</span>
-                  </div>
-                ` : `
-                  <div class="text-[11px] text-cyan-400 mt-2">نظام: يشاهد شاشات الروم مع استراحة دقيقة كل 30 دقيقة</div>
-                `}
-              </div>
-            </div>
-
-            <div class="mt-5 pt-3 border-t border-slate-800 flex justify-between items-center">
-              <span class="text-[10px] text-slate-500 font-mono">روم: ${acc.channelId}</span>
-              <button onclick="removeAccount('${acc.id}')" class="text-red-400 hover:text-red-300 text-xs px-3 py-1 bg-red-950/40 rounded-xl border border-red-800/40 transition">
-                حذف الحساب 🗑️
-              </button>
-            </div>
-          </div>
-        `).join('');
-      } catch (e) {}
-    }
-
-    setInterval(poll, 1500);
+    setInterval(poll, 3000);
     poll();
   </script>
 </body>
