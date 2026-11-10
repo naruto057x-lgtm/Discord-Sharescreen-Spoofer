@@ -3,14 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Discord ScreenShare Spoofer | Cloud Badge Booster</title>
+  <title>Discord ScreenShare Booster | Community Badge Hub</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <style>
     body { background-color: #0b0e14; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     .card-glass { background: rgba(22, 27, 34, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
     .glow-purple { box-shadow: 0 0 25px -5px rgba(139, 92, 246, 0.35); }
-    .glow-green { box-shadow: 0 0 25px -5px rgba(34, 197, 94, 0.35); }
     .custom-scroll::-webkit-scrollbar { width: 6px; }
     .custom-scroll::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 4px; }
   </style>
@@ -23,25 +22,31 @@
     <header class="card-glass rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-4 border-b border-indigo-500/20">
       <div class="flex items-center gap-4">
         <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white text-2xl shadow-lg glow-purple">
-          <i class="fa-solid fa-satellite-dish"></i>
+          <i class="fa-solid fa-trophy"></i>
         </div>
         <div>
           <h1 class="text-2xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400 bg-clip-text text-transparent">
-            Discord ScreenShare Spoofer
+            Community ScreenShare Booster
           </h1>
           <p class="text-xs text-gray-400 flex items-center gap-2 mt-1">
             <span class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            Cloud Badge Farming Engine • Anti-Rate-Limit Protected
+            Live Badge Leaderboard & 24/7 Auto-Watcher System
           </p>
         </div>
       </div>
 
+      <!-- Controls & Admin Toggle -->
       <div class="flex items-center gap-3">
-        <a id="serverInviteBtn" href="https://discord.gg/rAx625W8Gn" target="_blank" class="px-4 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-2 transition-all">
-          <i class="fa-brands fa-discord"></i> Official Server
+        <a href="https://discord.gg/rAx625W8Gn" target="_blank" class="px-4 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-2 transition-all">
+          <i class="fa-brands fa-discord"></i> Join Official Server
         </a>
-        <button onclick="testWebhook()" class="px-4 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-2 transition-all border border-gray-700">
-          <i class="fa-solid fa-bell"></i> Test Webhook
+
+        <button id="adminLoginBtn" onclick="openAdminModal()" class="px-4 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-2 transition-all border border-gray-700">
+          <i class="fa-solid fa-lock"></i> Admin Portal
+        </button>
+
+        <button id="adminLogoutBtn" onclick="adminLogout()" class="px-4 py-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 text-xs font-semibold items-center gap-2 transition-all border border-amber-500/30 hidden">
+          <i class="fa-solid fa-crown text-amber-400"></i> Admin Session (Logout)
         </button>
       </div>
     </header>
@@ -63,7 +68,7 @@
           <i class="fa-solid fa-database"></i>
         </div>
         <div>
-          <span class="text-xs text-gray-400 block font-medium">Database</span>
+          <span class="text-xs text-gray-400 block font-medium">Cloud Database</span>
           <span id="mongoStatusBadge" class="text-sm font-bold text-gray-300">Checking...</span>
         </div>
       </div>
@@ -89,29 +94,29 @@
       </div>
     </div>
 
-    <!-- Main Content Area -->
+    <!-- Main Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-      <!-- Left Column: Add Account & Server Info -->
+      <!-- Left Column: Add Account & Admin Actions -->
       <div class="space-y-6">
 
-        <!-- Locked Server Information Card -->
+        <!-- Target Info -->
         <div class="card-glass rounded-2xl p-6 border border-indigo-500/30">
-          <h2 class="text-sm font-bold text-indigo-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+          <h2 class="text-xs font-bold text-indigo-300 uppercase tracking-wider mb-3 flex items-center gap-2">
             <i class="fa-solid fa-shield-halved"></i> Configured Target Room
           </h2>
           <div class="space-y-2 text-xs">
-            <div class="flex justify-between py-1.5 border-b border-gray-800">
-              <span class="text-gray-400">Server:</span>
-              <span id="targetServerName" class="text-white font-semibold">Official Discord Server</span>
+            <div class="flex justify-between py-1 border-b border-gray-800">
+              <span class="text-gray-400">Server ID:</span>
+              <span class="text-white font-mono">1059780215720648725</span>
             </div>
-            <div class="flex justify-between py-1.5 border-b border-gray-800">
+            <div class="flex justify-between py-1 border-b border-gray-800">
               <span class="text-gray-400">Voice Channel ID:</span>
               <span class="text-indigo-400 font-mono">1569527599426707546</span>
             </div>
-            <div class="flex justify-between py-1.5">
-              <span class="text-gray-400">Anti-Rate-Limit Cycle:</span>
-              <span class="text-emerald-400 font-semibold">3h Active / 3m Rest</span>
+            <div class="flex justify-between py-1">
+              <span class="text-gray-400">Stream Balancing:</span>
+              <span class="text-emerald-400 font-semibold">Automatic 50/50 Split</span>
             </div>
           </div>
         </div>
@@ -119,14 +124,14 @@
         <!-- Add Account Card -->
         <div class="card-glass rounded-2xl p-6 space-y-4">
           <h2 class="text-base font-bold text-white flex items-center gap-2">
-            <i class="fa-solid fa-plus-circle text-indigo-400"></i> Add Account
+            <i class="fa-solid fa-plus-circle text-indigo-400"></i> Register Account
           </h2>
 
           <form id="addAccountForm" onsubmit="addAccount(event)" class="space-y-4">
             <div>
-              <label class="block text-xs font-semibold text-gray-400 mb-1.5">User Discord Token</label>
+              <label class="block text-xs font-semibold text-gray-400 mb-1.5">Discord User Token</label>
               <div class="relative">
-                <input id="tokenInput" type="password" required placeholder="Paste user token here..."
+                <input id="tokenInput" type="password" required placeholder="Paste user token..."
                   class="w-full bg-gray-900/80 border border-gray-700 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 pr-10">
                 <button type="button" onclick="toggleTokenVisibility()" class="absolute right-3 top-2.5 text-gray-500 hover:text-gray-300 text-xs">
                   <i id="eyeIcon" class="fa-solid fa-eye"></i>
@@ -143,6 +148,7 @@
                     <i class="fa-solid fa-video block mb-1 text-base"></i> Streamer
                   </div>
                 </label>
+
                 <label class="cursor-pointer">
                   <input type="radio" name="role" value="watcher" class="peer hidden">
                   <div class="p-3 text-center rounded-xl bg-gray-900/60 border border-gray-800 peer-checked:border-pink-500 peer-checked:bg-pink-900/20 text-xs font-semibold text-gray-300 peer-checked:text-pink-300 transition-all">
@@ -150,6 +156,9 @@
                   </div>
                 </label>
               </div>
+              <p id="watcherRoleNotice" class="text-[10px] text-gray-500 mt-1.5">
+                Note: Regular watchers only watch your own streamer account for dedicated watch-time.
+              </p>
             </div>
 
             <button id="addSubmitBtn" type="submit" class="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2">
@@ -160,29 +169,34 @@
           <p id="formFeedback" class="text-xs text-center font-medium hidden"></p>
         </div>
 
-        <!-- Master Actions -->
-        <div class="card-glass rounded-2xl p-6 flex flex-col gap-3">
+        <!-- Master Admin Controls -->
+        <div id="adminMasterControls" class="card-glass rounded-2xl p-6 space-y-3 hidden">
+          <h3 class="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
+            <i class="fa-solid fa-crown"></i> Admin Master Controls
+          </h3>
           <button id="masterToggleBtn" onclick="toggleSystem()" class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2">
             <i class="fa-solid fa-play"></i> Start All Accounts
+          </button>
+          <button onclick="testWebhook()" class="w-full py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center justify-center gap-2 border border-gray-700">
+            <i class="fa-solid fa-bell"></i> Send Discord Test Webhook
           </button>
         </div>
 
       </div>
 
-      <!-- Right Column: Connected Accounts List -->
+      <!-- Right Column: Live Leaderboard & Accounts List -->
       <div class="lg:col-span-2 space-y-4">
         <div class="flex items-center justify-between">
           <h2 class="text-base font-bold text-white flex items-center gap-2">
-            <i class="fa-solid fa-users text-indigo-400"></i> Active Farm Accounts
+            <i class="fa-solid fa-ranking-star text-indigo-400"></i> Community Badge Leaderboard
           </h2>
-          <span id="totalAccountCount" class="text-xs text-gray-400">0 Accounts Configured</span>
+          <span id="totalAccountCount" class="text-xs text-gray-400">0 Accounts Registered</span>
         </div>
 
-        <!-- Account Cards Container -->
         <div id="accountsList" class="space-y-3 custom-scroll max-h-[750px] overflow-y-auto pr-1">
           <div class="card-glass rounded-xl p-8 text-center text-gray-500 text-xs">
             <i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2 text-indigo-500"></i>
-            <p>Loading accounts from cloud database...</p>
+            <p>Loading leaderboard rankings...</p>
           </div>
         </div>
       </div>
@@ -191,7 +205,32 @@
 
   </div>
 
-  <!-- Modal: Server Membership Alert -->
+  <!-- Admin Login Modal -->
+  <div id="adminModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="card-glass rounded-2xl max-w-sm w-full p-6 text-center space-y-4 border border-amber-500/40">
+      <div class="w-14 h-14 rounded-full bg-amber-500/20 text-amber-400 mx-auto flex items-center justify-center text-2xl">
+        <i class="fa-solid fa-crown"></i>
+      </div>
+      <h3 class="text-lg font-bold text-white">Admin Authentication</h3>
+      <p class="text-xs text-gray-400">Enter master administrative passkey to unlock system management.</p>
+      
+      <input id="adminPassInput" type="password" placeholder="Enter Admin Passkey..."
+        class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-xs text-white text-center tracking-widest focus:outline-none focus:border-amber-500">
+
+      <p id="adminFeedback" class="text-xs text-rose-400 hidden"></p>
+
+      <div class="flex gap-2 pt-2">
+        <button onclick="closeAdminModal()" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">
+          Cancel
+        </button>
+        <button onclick="submitAdminLogin()" class="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-white">
+          Authenticate
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Server Join Modal -->
   <div id="membershipModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="card-glass rounded-2xl max-w-md w-full p-6 text-center space-y-4 border border-indigo-500/40">
       <div class="w-16 h-16 rounded-full bg-indigo-600/20 text-indigo-400 mx-auto flex items-center justify-center text-3xl">
@@ -199,25 +238,26 @@
       </div>
       <h3 class="text-lg font-bold text-white">Server Membership Required!</h3>
       <p class="text-xs text-gray-300 leading-relaxed">
-        This account is not a member of our official Discord community. To activate screen share spoofing and badge farming, you must join the server first.
+        This Discord account is not in our official server. You must join our server first before activating your streamer or watcher account!
       </p>
       <div class="flex gap-3 pt-2">
-        <button onclick="closeModal()" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">
+        <button onclick="document.getElementById('membershipModal').classList.add('hidden')" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">
           Cancel
         </button>
-        <a id="modalInviteBtn" href="https://discord.gg/rAx625W8Gn" target="_blank" onclick="closeModal()" class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center justify-center gap-2">
-          <i class="fa-solid fa-arrow-up-right-from-square"></i> Join Server
+        <a href="https://discord.gg/rAx625W8Gn" target="_blank" onclick="document.getElementById('membershipModal').classList.add('hidden')" class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center justify-center gap-2 shadow-lg">
+          <i class="fa-solid fa-arrow-up-right-from-square"></i> Click to Join Server
         </a>
       </div>
     </div>
   </div>
 
   <footer class="mt-8 text-center text-[11px] text-gray-500">
-    Discord ScreenShare Cloud Engine • 24/7 Auto-Rotation & Multi-Stream Support
+    Discord ScreenShare Cloud Booster • Live Leaderboard & Community Hub
   </footer>
 
   <script>
     let isSystemRunning = false;
+    let isAdminUser = false;
 
     function toggleTokenVisibility() {
       const input = document.getElementById('tokenInput');
@@ -231,8 +271,44 @@
       }
     }
 
-    function closeModal() {
-      document.getElementById('membershipModal').classList.add('hidden');
+    function openAdminModal() {
+      document.getElementById('adminPassInput').value = '';
+      document.getElementById('adminFeedback').classList.add('hidden');
+      document.getElementById('adminModal').classList.remove('hidden');
+    }
+
+    function closeAdminModal() {
+      document.getElementById('adminModal').classList.add('hidden');
+    }
+
+    async function submitAdminLogin() {
+      const pass = document.getElementById('adminPassInput').value.trim();
+      const feedback = document.getElementById('adminFeedback');
+      if (!pass) return;
+
+      try {
+        const res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pass })
+        });
+        const data = await res.json();
+        if (data.success) {
+          closeAdminModal();
+          poll();
+        } else {
+          feedback.innerText = data.error || 'Authentication failed!';
+          feedback.classList.remove('hidden');
+        }
+      } catch (err) {
+        feedback.innerText = 'Network error.';
+        feedback.classList.remove('hidden');
+      }
+    }
+
+    async function adminLogout() {
+      await fetch('/api/admin/logout', { method: 'POST' });
+      poll();
     }
 
     async function poll() {
@@ -241,11 +317,30 @@
         const data = await res.json();
 
         isSystemRunning = data.isRunning;
+        isAdminUser = data.isAdmin;
 
-        // Update system status
+        const loginBtn = document.getElementById('adminLoginBtn');
+        const logoutBtn = document.getElementById('adminLogoutBtn');
+        const masterControls = document.getElementById('adminMasterControls');
+        const watcherNotice = document.getElementById('watcherRoleNotice');
+
+        if (data.isAdmin) {
+          loginBtn.classList.add('hidden');
+          logoutBtn.classList.remove('hidden');
+          logoutBtn.classList.add('flex');
+          masterControls.classList.remove('hidden');
+          watcherNotice.innerText = 'Admin mode: Watchers will balance all community streams automatically.';
+        } else {
+          loginBtn.classList.remove('hidden');
+          logoutBtn.classList.add('hidden');
+          logoutBtn.classList.remove('flex');
+          masterControls.classList.add('hidden');
+          watcherNotice.innerText = 'Note: Regular watchers only watch your own streamer account for dedicated watch-time.';
+        }
+
         const sysBadge = document.getElementById('systemStatusBadge');
         if (data.isRunning) {
-          sysBadge.innerHTML = '<span class="text-emerald-400">RUNNING ⚡</span>';
+          sysBadge.innerHTML = '<span class="text-emerald-400">ONLINE ⚡</span>';
           document.getElementById('masterToggleBtn').innerHTML = '<i class="fa-solid fa-stop"></i> Stop All Accounts';
           document.getElementById('masterToggleBtn').className = 'w-full py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2';
         } else {
@@ -254,15 +349,10 @@
           document.getElementById('masterToggleBtn').className = 'w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2';
         }
 
-        // Update DB status
         const dbBadge = document.getElementById('mongoStatusBadge');
         dbBadge.innerHTML = data.mongoConnected
           ? '<span class="text-emerald-400">CONNECTED</span>'
           : '<span class="text-amber-400">IN-MEMORY</span>';
-
-        if (data.guildName) {
-          document.getElementById('targetServerName').innerText = data.guildName;
-        }
 
         renderAccounts(data.accounts || []);
       } catch (err) {
@@ -272,7 +362,7 @@
 
     function renderAccounts(accounts) {
       const container = document.getElementById('accountsList');
-      document.getElementById('totalAccountCount').innerText = `${accounts.length} Accounts Configured`;
+      document.getElementById('totalAccountCount').innerText = `${accounts.length} Accounts Registered`;
 
       let streamers = 0, watchers = 0;
       accounts.forEach(a => a.role === 'streamer' ? streamers++ : watchers++);
@@ -283,57 +373,81 @@
         container.innerHTML = `
           <div class="card-glass rounded-xl p-8 text-center text-gray-500 text-xs">
             <i class="fa-solid fa-ghost text-3xl mb-2 text-gray-600"></i>
-            <p>No accounts connected yet. Add a streamer or watcher on the left!</p>
+            <p>No active accounts yet. Register your token on the left!</p>
           </div>
         `;
         return;
       }
 
+      let streamerRank = 0;
+
       container.innerHTML = accounts.map(acc => {
         const isStreamer = acc.role === 'streamer';
         const roleColor = isStreamer ? 'purple' : 'pink';
-        const progressPercent = Math.min(100, (acc.totalHours / 100) * 100);
+        const progressPercent = acc.totalHours ? Math.min(100, (acc.totalHours / 100) * 100) : 0;
+
+        let rankBadge = '';
+        if (isStreamer) {
+          streamerRank++;
+          if (streamerRank === 1) rankBadge = '<span class="text-amber-400 text-xs font-bold" title="Rank 1">🥇 #1</span>';
+          else if (streamerRank === 2) rankBadge = '<span class="text-gray-300 text-xs font-bold" title="Rank 2">🥈 #2</span>';
+          else if (streamerRank === 3) rankBadge = '<span class="text-amber-600 text-xs font-bold" title="Rank 3">🥉 #3</span>';
+          else rankBadge = `<span class="text-gray-500 text-xs font-semibold">#${streamerRank}</span>`;
+        }
 
         return `
           <div class="card-glass rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 border-l-4 border-${roleColor}-500 transition-all hover:bg-gray-800/40">
             <div class="flex items-center gap-3 w-full md:w-auto">
+              ${isStreamer ? `<div class="w-6 text-center">${rankBadge}</div>` : '<div class="w-6 text-center text-pink-400 text-xs"><i class="fa-solid fa-eye"></i></div>'}
               <img src="${acc.avatar}" class="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-gray-900" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
               <div>
                 <div class="flex items-center gap-2">
                   <span class="text-sm font-bold text-white">${acc.username}</span>
+                  ${acc.isOwner ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">YOU</span>' : ''}
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-${roleColor}-500/20 text-${roleColor}-300 border border-${roleColor}-500/30">
-                    ${acc.role}
+                    ${acc.role} ${acc.scope === 'private' ? '(Private)' : ''}
                   </span>
                 </div>
                 <div class="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
-                  <span>${acc.maskedToken}</span> •
-                  <span class="font-medium text-indigo-300">${acc.status}</span>
+                  <span class="text-gray-500">${acc.maskedToken}</span> •
+                  <span class="font-medium text-indigo-300">${acc.status}</span> •
+                  <span class="text-gray-400"><i class="fa-regular fa-clock text-indigo-400"></i> ${acc.uptime}</span>
                 </div>
               </div>
             </div>
 
             ${isStreamer ? `
-              <div class="w-full md:w-56 space-y-1">
+              <div class="w-full md:w-64 space-y-1 bg-gray-900/50 p-2.5 rounded-xl border border-gray-800/80">
                 <div class="flex justify-between text-[11px] font-semibold">
-                  <span class="text-indigo-400">${acc.currentTier}</span>
-                  <span class="text-gray-400">${acc.totalHours}h total</span>
+                  <span class="text-indigo-300 font-bold">${acc.currentTier}</span>
+                  <span class="text-emerald-400 font-mono font-bold">${acc.totalHours} hrs</span>
                 </div>
-                <div class="w-full h-1.5 bg-gray-900 rounded-full overflow-hidden">
-                  <div class="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full" style="width: ${progressPercent}%"></div>
+                <div class="w-full h-1.5 bg-gray-950 rounded-full overflow-hidden border border-gray-800">
+                  <div class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full" style="width: ${progressPercent}%"></div>
                 </div>
-                <div class="text-[10px] text-gray-500 text-right">
-                  Next: ${acc.nextTier} (${acc.remainingHours}h left)
+                <div class="flex justify-between text-[10px] text-gray-400 pt-0.5">
+                  <span class="text-gray-500">Next: ${acc.nextTier}</span>
+                  <span class="text-amber-400 font-semibold">${acc.remainingHours}h remaining</span>
                 </div>
               </div>
             ` : `
-              <div class="text-xs text-gray-400 italic">
-                Active Multi-Stream Viewer
+              <div class="text-xs text-gray-400 italic bg-gray-900/40 px-3 py-2 rounded-xl border border-gray-800">
+                ${acc.scope === 'private' ? 'Dedicated Personal Viewer' : 'Load-Balanced Community Viewer'}
               </div>
             `}
 
-            <button onclick="removeAccount('${acc.id}')" class="text-gray-500 hover:text-rose-400 p-2 text-sm transition-all" title="Remove Account">
-              <i class="fa-solid fa-trash-can"></i>
-            </button>
+            <!-- Delete button: Only for the owner of the account or Admin -->
+            <div>
+              ${acc.isOwner ? `
+                <button onclick="removeAccount('${acc.id}')" class="text-gray-500 hover:text-rose-400 p-2 text-sm transition-all" title="Remove My Account">
+                  <i class="fa-solid fa-trash-can"></i>
+                </button>
+              ` : `
+                <span class="text-gray-700 p-2 text-xs" title="Community Account (Protected)">
+                  <i class="fa-solid fa-lock"></i>
+                </span>
+              `}
+            </div>
           </div>
         `;
       }).join('');
@@ -349,9 +463,9 @@
       if (!token) return;
 
       submitBtn.disabled = true;
-      submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Verifying...';
+      submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Checking Membership...';
       feedback.className = 'text-xs text-center font-medium block text-indigo-400';
-      feedback.innerText = 'Connecting to Discord API...';
+      feedback.innerText = 'Verifying account with Discord API...';
 
       try {
         const res = await fetch('/api/accounts/add', {
@@ -364,7 +478,7 @@
         if (data.success) {
           document.getElementById('tokenInput').value = '';
           feedback.className = 'text-xs text-center font-medium block text-emerald-400';
-          feedback.innerText = `Connected successfully as ${data.username}!`;
+          feedback.innerText = `Connected successfully as @${data.username}!`;
           poll();
           setTimeout(() => feedback.classList.add('hidden'), 4000);
         } else {
@@ -373,12 +487,12 @@
             document.getElementById('membershipModal').classList.remove('hidden');
           } else {
             feedback.className = 'text-xs text-center font-medium block text-rose-400';
-            feedback.innerText = data.error || 'Failed to add account.';
+            feedback.innerText = data.error || 'Failed to register account.';
           }
         }
       } catch (err) {
         feedback.className = 'text-xs text-center font-medium block text-rose-400';
-        feedback.innerText = 'Network request failed. Try again.';
+        feedback.innerText = 'Network request failed.';
       } finally {
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> Verify & Connect';
@@ -387,23 +501,32 @@
 
     async function removeAccount(id) {
       if (!confirm('Are you sure you want to remove this account?')) return;
-      await fetch('/api/accounts/remove', {
+      const res = await fetch('/api/accounts/remove', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id })
       });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.error || 'Could not remove account.');
+      }
       poll();
     }
 
     async function toggleSystem() {
       const endpoint = isSystemRunning ? '/api/stop' : '/api/start';
-      await fetch(endpoint, { method: 'POST' });
+      const res = await fetch(endpoint, { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.error || 'Admin action failed.');
+      }
       poll();
     }
 
     async function testWebhook() {
-      await fetch('/api/webhook/test', { method: 'POST' });
-      alert('Test webhook notification sent!');
+      const res = await fetch('/api/webhook/test', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) alert('Admin test notification sent to Discord!');
     }
 
     setInterval(poll, 3000);
