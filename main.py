@@ -10,9 +10,11 @@ import struct
 import time
 import urllib.request
 import uuid
+import socket
 import aiohttp
 from aiohttp import web
 from motor.motor_asyncio import AsyncIOMotorClient
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 PORT = int(os.environ.get("PORT", 3000))
 MONGO_URI = os.environ.get("MONGO_URI", "")
@@ -31,16 +33,16 @@ USER_AGENT = (
 )
 
 STREAM_BADGE_MILESTONES = {
-    1: (1, "Tier 1: Newcomer (1 hour)"),
-    2: (5, "Tier 2: Fledgling (5 hours)"),
-    3: (20, "Tier 3: Breakout (20 hours)"),
-    4: (75, "Tier 4: Standout (75 hours)"),
-    5: (150, "Tier 5: Trendsetter (150 hours)"),
-    6: (300, "Tier 6: Headliner (300 hours)"),
-    7: (500, "Tier 7: Star (500 hours)"),
-    8: (1000, "Tier 8: Sensation (1,000 hours)"),
-    9: (2000, "Tier 9: Visionary (2,000 hours)"),
-    10: (5000, "Tier 10: Phenomenon (5,000+ hours)"),
+    1: (1.0, "Tier 1: Newcomer (1 hour)"),
+    2: (5.0, "Tier 2: Fledgling (5 hours)"),
+    3: (20.0, "Tier 3: Breakout (20 hours)"),
+    4: (75.0, "Tier 4: Standout (75 hours)"),
+    5: (150.0, "Tier 5: Trendsetter (150 hours)"),
+    6: (300.0, "Tier 6: Headliner (300 hours)"),
+    7: (500.0, "Tier 7: Star (500 hours)"),
+    8: (1000.0, "Tier 8: Sensation (1,000 hours)"),
+    9: (2000.0, "Tier 9: Visionary (2,000 hours)"),
+    10: (5000.0, "Tier 10: Phenomenon (5,000+ hours)"),
 }
 
 def make_super_properties() -> str:
@@ -85,7 +87,7 @@ class AsyncWebSocket:
         await self.writer.drain()
         line = await self.reader.readline()
         if not line.startswith(b"HTTP/1.1 101"):
-            raise ConnectionError(f"Handshake failed: {line.decode('utf-8', errors='ignore').strip()}")
+            raise ConnectionError("Handshake failed")
         while True:
             hl = await self.reader.readline()
             if hl in (b"\r\n", b"\n", b""):
@@ -155,7 +157,7 @@ class AsyncWebSocket:
                 if message_opcode == 0x1:
                     try:
                         return json.loads(fragments.decode("utf-8", errors="replace"))
-                    except Exception:
+                    except:
                         return None
                 fragments.clear()
                 message_opcode = None
@@ -169,21 +171,27 @@ class AsyncWebSocket:
                 await self._send_frame(0x8, struct.pack("!H", 1000))
                 self.writer.close()
                 await self.writer.wait_closed()
-            except Exception:
+            except:
                 pass
 
 class RTCVoiceSession:
-    def __init__(self, endpoint: str, server_id: str, channel_id: str, user_id: str, session_id: str, voice_token: str, is_stream: bool = False):
+    def __init__(self, endpoint: str, server_id: str, channel_id: str, user_id: str, session_id: str, voice_token: str, rtc_connection_id: str, is_stream: bool = False):
         self.endpoint = endpoint
         self.server_id = server_id
         self.channel_id = channel_id
         self.user_id = user_id
         self.session_id = session_id
         self.voice_token = voice_token
+        self.rtc_connection_id = rtc_connection_id
         self.is_stream = is_stream
         self.ws = None
+        self.udp_socket = None
+        self.secret_key = None
+        self.aesgcm = None
+        self.video_ssrc = 0
         self._task = None
         self._hb_task = None
+        self._media_task = None
         self.running = False
 
     def start(self):
@@ -192,12 +200,61 @@ class RTCVoiceSession:
 
     async def stop(self):
         self.running = False
-        if self._hb_task:
-            self._hb_task.cancel()
-        if self.ws:
-            await self.ws.close()
-        if self._task:
-            self._task.cancel()
+        if self._hb_task: self._hb_task.cancel()
+        if self._media_task: self._media_task.cancel()
+        if self.udp_socket:
+            try: self.udp_socket.close()
+            except: pass
+        if self.ws: await self.ws.close()
+        if self._task: self._task.cancel()
+
+    async def _udp_media_loop(self, ip: str, port: int):
+        seq = 0
+        nonce_seq = 0
+        # Valid H.264 Annex-B Minimal Black Frame (SPS + PPS + IDR slice)
+        h264_black_frame = (
+            b"\x00\x00\x00\x01\x67\x42\x00\x1f\x96\x54\x05\x01\xe9\x80"
+            b"\x00\x00\x00\x01\x68\xce\x38\x80"
+            b"\x00\x00\x00\x01\x65\x88\x84\x00\x10\x00\x00\x03\x00\x00\x03\x00\x78"
+        )
+        try:
+            while self.running and self.udp_socket and self.aesgcm:
+                timestamp = int(time.time() * 90000) & 0xFFFFFFFF
+                
+                # 1. Real Encrypted Video RTP Packet (Payload Type 101)
+                rtp_header = bytearray(12)
+                rtp_header[0] = 0x80
+                rtp_header[1] = 101 # PT 101 = H264
+                struct.pack_into(">H", rtp_header, 2, seq % 65535)
+                struct.pack_into(">I", rtp_header, 4, timestamp)
+                struct.pack_into(">I", rtp_header, 8, self.video_ssrc)
+                
+                nonce_seq = (nonce_seq + 1) % 0xFFFFFFFF
+                nonce = struct.pack(">I", nonce_seq) + (b"\x00" * 8)
+                
+                # AES-256-GCM encryption with RTP Header as AAD
+                ciphertext = self.aesgcm.encrypt(nonce, h264_black_frame, bytes(rtp_header))
+                final_pkt = bytes(rtp_header) + ciphertext + struct.pack(">I", nonce_seq)
+                
+                try:
+                    self.udp_socket.sendto(final_pkt, (ip, port))
+                except BlockingIOError:
+                    pass
+                
+                # 2. Discord Keepalive Ping
+                if seq % 5 == 0:
+                    ka_pkt = struct.pack('<Q', int(time.time() * 1000))
+                    try:
+                        self.udp_socket.sendto(ka_pkt, (ip, port))
+                    except BlockingIOError:
+                        pass
+                
+                seq += 1
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"⚠️ [Media Loop] Error: {e}", flush=True)
 
     async def _run(self):
         url = self.endpoint
@@ -222,49 +279,87 @@ class RTCVoiceSession:
                 if not msg:
                     break
                 op, d = msg.get("op"), msg.get("d") or {}
+                
                 if op == 8:
                     interval = d.get("heartbeat_interval", 15000) / 1000.0
-                    if self._hb_task:
-                        self._hb_task.cancel()
+                    if self._hb_task: self._hb_task.cancel()
                     self._hb_task = asyncio.create_task(self._hb(interval))
+                
                 elif op == 2:
+                    ip = d.get("ip")
+                    port = d.get("port")
+                    ssrc = d.get("ssrc", 1)
+                    self.video_ssrc = ssrc + 1
+                    rtx_ssrc = ssrc + 2
+                    modes = d.get("modes", [])
+                    selected_mode = "aead_aes256_gcm_rtpsize" if "aead_aes256_gcm_rtpsize" in modes else modes[0]
+                    
+                    ext_ip = "127.0.0.1"
+                    ext_port = 1337
+                    
+                    # IP Discovery
+                    try:
+                        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        self.udp_socket.setblocking(False)
+                        discovery_pkt = bytearray(74)
+                        struct.pack_into(">H", discovery_pkt, 0, 1)
+                        struct.pack_into(">H", discovery_pkt, 2, 70)
+                        struct.pack_into(">I", discovery_pkt, 4, ssrc)
+                        self.udp_socket.sendto(discovery_pkt, (ip, port))
+                        
+                        loop = asyncio.get_running_loop()
+                        resp, _ = await asyncio.wait_for(loop.sock_recv(self.udp_socket, 74), timeout=5.0)
+                        ext_ip = resp[8:72].decode('utf-8').strip('\x00')
+                        ext_port = struct.unpack_from(">H", resp, 72)[0]
+                    except:
+                        pass
+
                     await self.ws.send_json({
                         "op": 1,
                         "d": {
                             "protocol": "udp",
-                            "data": {"address": d.get("ip", "127.0.0.1"), "port": d.get("port", 1337), "mode": "aead_aes256_gcm_rtpsize"},
+                            "data": {"address": ext_ip, "port": ext_port, "mode": selected_mode},
                             "codecs": [
                                 {"name": "opus", "type": "audio", "priority": 1000, "payload_type": 120},
                                 {"name": "H264", "type": "video", "priority": 1000, "payload_type": 101, "rtx_payload_type": 102, "encode": True, "decode": True}
                             ],
-                            "rtc_connection_id": str(uuid.uuid4())
+                            "rtc_connection_id": self.rtc_connection_id
                         }
                     })
-                    ssrc = d.get("ssrc", 1)
+                    
                     await self.ws.send_json({
                         "op": 12,
                         "d": {
-                            "audio_ssrc": ssrc, "video_ssrc": ssrc + 1, "rtx_ssrc": ssrc + 2,
+                            "audio_ssrc": ssrc, "video_ssrc": self.video_ssrc, "rtx_ssrc": rtx_ssrc,
                             "streams": [{
-                                "type": "video", "rid": "100", "ssrc": ssrc + 1, "active": True,
-                                "quality": 100, "rtx_ssrc": ssrc + 2, "max_bitrate": 1500000,
+                                "type": "video", "rid": "100", "ssrc": self.video_ssrc, "active": True,
+                                "quality": 100, "rtx_ssrc": rtx_ssrc, "max_bitrate": 1500000,
                                 "max_framerate": 30, "max_resolution": {"type": "fixed", "width": 1280, "height": 720}
                             }]
                         }
                     })
-        except Exception as e:
-            print(f"⚠️ RTCVoiceSession error: {e}", flush=True)
+
+                # Opcode 4: The missing Session Description event carrying the real secret_key!
+                elif op == 4:
+                    raw_key = d.get("secret_key", [])
+                    if raw_key and len(raw_key) == 32:
+                        self.secret_key = bytes(raw_key)
+                        self.aesgcm = AESGCM(self.secret_key)
+                        print(f"🔑 [Encryption Ready] AEAD AES-256-GCM initialized for {self.user_id}!", flush=True)
+                        if self.is_stream and not self._media_task:
+                            self._media_task = asyncio.create_task(self._udp_media_loop(ip, port))
+        except:
+            pass
 
     async def _hb(self, interval: float):
         try:
             while self.running and self.ws and not self.ws.closed:
                 await self.ws.send_json({"op": 3, "d": {"t": int(time.time() * 1000), "seq_ack": -1}})
                 await asyncio.sleep(interval)
-        except Exception:
-            pass
+        except: pass
 
 class ManagedAccount:
-    def __init__(self, acc_id: str, token: str, role: str, guild_id: str, channel_id: str, owner_id: str = "global", scope: str = "community", username="Loading...", avatar_url=None, tier_num=0, raw_hours=None, total_hours=0.0, current_tier="No Badge (0h)", next_tier="Tier 1: Newcomer (1 hour)", remaining_hours=1.0, progress_percent=0.0):
+    def __init__(self, acc_id: str, token: str, role: str, guild_id: str, channel_id: str, owner_id: str = "global", scope: str = "community", username="Loading...", avatar_url=None, tier_num=0, raw_hours=None, total_hours=0.0, current_tier="No Badge (0h)", next_tier="Tier 1: Newcomer (1 hour)", remaining_hours=1.0, progress_percent=0.0, analytics_token=""):
         self.acc_id = acc_id
         self.token = token.strip()
         self.role = role
@@ -274,8 +369,8 @@ class ManagedAccount:
         self.scope = scope
         self.username = username
         self.avatar_url = avatar_url or "https://cdn.discordapp.com/embed/avatars/0.png"
+        self.analytics_token = analytics_token
         
-        # Real Discord Badge State (No fake local counter)
         self.tier_num = tier_num
         self.raw_hours = raw_hours
         self.total_hours = total_hours
@@ -285,17 +380,22 @@ class ManagedAccount:
         self.progress_percent = progress_percent
 
         self.status = "Idle 🛑"
+        self.telemetry_status = "Waiting..."
         self.is_connected = False
         self.connected_since = None
         self.user_id = None
         self.stream_key = None
         self.voice_session_id = None
+        self.rtc_connection_id = str(uuid.uuid4())
+        self.client_session_id = str(uuid.uuid4())
+        
         self.watching_streams = set()
         self.ws = None
         self.voice_rtc = None
         self.stream_rtc = None
         self.running = False
         self.task = None
+        self.telemetry_task = None
         self.cooldown_active = False
 
     def mask_token(self):
@@ -315,46 +415,102 @@ class ManagedAccount:
         mins = (elapsed % 3600) // 60
         return f"{hrs}h {mins}m"
 
-    async def start(self):
-        if self.running:
+    # --- SCIENCE TELEMETRY ENGINE (With duration_tracked_ms) ---
+    async def _send_telemetry(self, events):
+        if not self.analytics_token or not self.is_connected:
             return
+        payload_events = []
+        for evt in events:
+            payload_events.append({
+                "type": evt,
+                "properties": {
+                    "client_track_timestamp": int(time.time() * 1000),
+                    "client_heartbeat_session_id": self.client_session_id,
+                    "guild_id": self.guild_id,
+                    "channel_id": self.channel_id,
+                    "media_session_id": self.voice_session_id,
+                    "rtc_connection_id": self.rtc_connection_id,
+                    "duration": 60000,
+                    "duration_tracked_ms": 60000, # The exact field Discord pipeline reads!
+                    "is_video_blank": False,
+                    "connection_type": "webrtc"
+                }
+            })
+        payload = {"token": self.analytics_token, "events": payload_events}
+        headers = {
+            "Authorization": self.token,
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+            "X-Super-Properties": make_super_properties()
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post("https://discord.com/api/v9/science", json=payload, headers=headers) as r:
+                    if r.status in (200, 204):
+                        self.telemetry_status = "Tracking Active 🟢"
+                    else:
+                        self.telemetry_status = f"Err: {r.status} 🔴"
+        except:
+            self.telemetry_status = "Network Err 🟡"
+
+    async def _telemetry_loop(self):
+        try:
+            while not self.is_connected or not self.stream_key:
+                await asyncio.sleep(1)
+            
+            if self.role == "streamer":
+                await self._send_telemetry(["media_session_joined", "video_stream_started"])
+                print(f"📡 [Science] Tracking started for {self.username}!")
+            
+            while self.running:
+                await asyncio.sleep(60)
+                if self.role == "streamer" and self.is_connected and not self.cooldown_active:
+                    await self._send_telemetry(["video_stream_heartbeat"])
+        except asyncio.CancelledError:
+            pass
+
+    async def start(self):
+        if self.running: return
         self.running = True
         self.status = "Connecting... ⏳"
+        self.telemetry_status = "Initializing..."
+        self.rtc_connection_id = str(uuid.uuid4())
+        self.client_session_id = str(uuid.uuid4())
         self.task = asyncio.create_task(self._loop())
+        if self.role == "streamer":
+            self.telemetry_task = asyncio.create_task(self._telemetry_loop())
 
     async def stop(self):
         self.running = False
-        if self.task:
-            self.task.cancel()
+        if self.role == "streamer":
+            await self._send_telemetry(["video_stream_ended"])
+        if self.task: self.task.cancel()
+        if self.telemetry_task: self.telemetry_task.cancel()
         if self.ws and not self.ws.closed:
             try:
                 if self.role == "streamer" and self.stream_key:
                     await self.ws.send_json({"op": 19, "d": {"stream_key": self.stream_key}})
                 await self.ws.send_json({"op": 4, "d": {"guild_id": self.guild_id, "channel_id": None, "self_mute": True, "self_deaf": True}})
-            except Exception:
-                pass
+            except: pass
             await self.ws.close()
-        if self.voice_rtc:
-            await self.voice_rtc.stop()
-        if self.stream_rtc:
-            await self.stream_rtc.stop()
+        if self.voice_rtc: await self.voice_rtc.stop()
+        if self.stream_rtc: await self.stream_rtc.stop()
         self.is_connected = False
         self.connected_since = None
         self.status = "Idle 🛑"
+        self.telemetry_status = "Offline"
 
     async def _loop(self):
         while self.running:
             try:
                 self.status = "Connecting... ⏳"
-                print(f"🔄 Connecting [{self.username}] ({self.role}) to Gateway...", flush=True)
                 self.ws = AsyncWebSocket(GATEWAY_URL)
                 await self.ws.connect()
                 hb_t = None
                 try:
                     while self.running:
                         msg = await self.ws.recv_json()
-                        if not msg:
-                            break
+                        if not msg: break
                         op, t, d = msg.get("op"), msg.get("t"), msg.get("d") or {}
                         if op == 10:
                             interval = d.get("heartbeat_interval", 41250) / 1000.0
@@ -372,19 +528,13 @@ class ManagedAccount:
                         elif op == 0:
                             await self._handle_dispatch(t, d)
                 finally:
-                    if hb_t:
-                        hb_t.cancel()
-                    if self.voice_rtc:
-                        await self.voice_rtc.stop()
-                    if self.stream_rtc:
-                        await self.stream_rtc.stop()
-                    if self.ws:
-                        await self.ws.close()
+                    if hb_t: hb_t.cancel()
+                    if self.voice_rtc: await self.voice_rtc.stop()
+                    if self.stream_rtc: await self.stream_rtc.stop()
+                    if self.ws: await self.ws.close()
             except Exception as e:
-                if not self.running:
-                    break
+                if not self.running: break
                 self.status = f"Error: {e}"
-                print(f"❌ [{self.username}] Gateway Error: {e}", flush=True)
                 await asyncio.sleep(6)
 
     async def _hb(self, interval: float):
@@ -392,52 +542,37 @@ class ManagedAccount:
             while self.running and self.ws and not self.ws.closed:
                 await self.ws.send_json({"op": 1, "d": None})
                 await asyncio.sleep(interval)
-        except Exception:
-            pass
+        except: pass
 
     async def _handle_dispatch(self, t: str, d: dict):
         if t == "READY":
             user = d.get("user") or {}
             self.user_id = user.get("id")
-            self.username = user.get("username", "DiscordUser")
+            self.username = user.get("username", "User")
             av = user.get("avatar")
-            if av:
-                self.avatar_url = f"https://cdn.discordapp.com/avatars/{self.user_id}/{av}.png?size=128"
-            else:
-                self.avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(self.user_id or 0) % 5}.png"
+            self.avatar_url = f"https://cdn.discordapp.com/avatars/{self.user_id}/{av}.png?size=128" if av else f"https://cdn.discordapp.com/embed/avatars/{int(self.user_id or 0) % 5}.png"
             self.voice_session_id = d.get("session_id")
             self.is_connected = True
             self.connected_since = time.time()
-            print(f"✅ [{self.username}] Authenticated on Gateway!", flush=True)
-
-            # Join target voice room
-            await self.ws.send_json({
-                "op": 4,
-                "d": {"guild_id": self.guild_id, "channel_id": self.channel_id, "self_mute": True, "self_deaf": True, "self_video": False}
-            })
-
+            
+            await self.ws.send_json({"op": 4, "d": {"guild_id": self.guild_id, "channel_id": self.channel_id, "self_mute": True, "self_deaf": True, "self_video": False}})
+            
             if self.role == "streamer":
                 await asyncio.sleep(1.5)
-                await self.ws.send_json({
-                    "op": 18,
-                    "d": {"type": "guild" if self.guild_id else "call", "guild_id": self.guild_id, "channel_id": self.channel_id, "preferred_region": None}
-                })
+                await self.ws.send_json({"op": 18, "d": {"type": "guild" if self.guild_id else "call", "guild_id": self.guild_id, "channel_id": self.channel_id, "preferred_region": None}})
                 self.stream_key = self.build_stream_key()
                 await asyncio.sleep(0.5)
                 await self.ws.send_json({"op": 22, "d": {"stream_key": self.stream_key, "paused": False}})
                 self.status = "Live Streaming 📺"
-                print(f"📺 [{self.username}] Broadcast live!", flush=True)
             else:
                 self.status = "Watching VC 👀"
-                print(f"👀 [{self.username}] Watcher is active! ({self.scope})", flush=True)
 
         elif t == "VOICE_SERVER_UPDATE":
             endpoint = d.get("endpoint")
             v_token = d.get("token")
             srv_id = d.get("guild_id") or self.channel_id
             if endpoint and v_token and self.user_id and self.voice_session_id:
-                if self.voice_rtc:
-                    await self.voice_rtc.stop()
+                if self.voice_rtc: await self.voice_rtc.stop()
                 self.voice_rtc = RTCVoiceSession(endpoint, srv_id, self.channel_id, self.user_id, self.voice_session_id, v_token, False)
                 self.voice_rtc.start()
 
@@ -460,18 +595,15 @@ class ManagedAccount:
             s_token = d.get("token")
             s_key = d.get("stream_key") or self.stream_key
             if endpoint and s_token and self.user_id and self.voice_session_id and s_key:
-                if self.stream_rtc:
-                    await self.stream_rtc.stop()
-                self.stream_rtc = RTCVoiceSession(endpoint, self.guild_id or self.channel_id, self.channel_id, self.user_id, self.voice_session_id, s_token, True)
+                if self.stream_rtc: await self.stream_rtc.stop()
+                self.stream_rtc = RTCVoiceSession(endpoint, self.guild_id or self.channel_id, self.channel_id, self.user_id, self.voice_session_id, s_token, self.rtc_connection_id, True)
                 self.stream_rtc.start()
 
     async def watch_target(self, target_stream_key: str):
         if self.ws and not self.ws.closed:
             await self.ws.send_json({"op": 20, "d": {"stream_key": target_stream_key}})
             self.watching_streams.add(target_stream_key)
-            cnt = len(self.watching_streams)
-            self.status = f"Watching {cnt} Stream(s) 👀🔥"
-            print(f"👀 [{self.username}] Watching stream: {target_stream_key}", flush=True)
+            self.status = f"Watching {len(self.watching_streams)} Stream(s) 👀🔥"
 
 class CloudSystemManager:
     def __init__(self):
@@ -507,18 +639,13 @@ class CloudSystemManager:
                         if g.get("id"):
                             self.guild_id = g["id"]
                             self.guild_name = g.get("name", "Official Community")
-                            print(f"🎯 Resolved Guild: {self.guild_name} ({self.guild_id})", flush=True)
                             return
-        except Exception:
-            pass
+        except: pass
         self.guild_id = DEFAULT_GUILD_ID
-        print(f"ℹ️ Fixed Guild ID: {self.guild_id}", flush=True)
 
-    # Real Badge Inspector from Discord Profile API v9
     async def update_account_badge_from_discord(self, acc: ManagedAccount):
-        if not acc.user_id or not acc.token:
-            return
-        url = f"https://discord.com/api/v9/users/{acc.user_id}/profile"
+        if not acc.user_id or not acc.token: return
+        url = f"https://discord.com/api/v9/users/{acc.user_id}/profile?with_mutual_guilds=false"
         headers = {"Authorization": acc.token, "User-Agent": USER_AGENT}
         try:
             async with aiohttp.ClientSession() as session:
@@ -532,20 +659,13 @@ class CloudSystemManager:
                         for b in badges:
                             b_id = str(b.get("id", "")).lower()
                             desc = str(b.get("description", ""))
-
-                            # Check for official streaming progression badge IDs
                             if "streaming" in b_id or "stream" in b_id:
                                 match = re.search(r"streaming(?:_tier)?_(\d+)", b_id, re.I)
-                                if match:
-                                    matched_tier = int(match.group(1))
-
-                                # Extract raw hours if reported by Discord
+                                if match: matched_tier = int(match.group(1))
                                 hrs_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)", desc, re.I)
                                 if hrs_match:
-                                    try:
-                                        raw_hrs = float(hrs_match.group(1))
-                                    except Exception:
-                                        pass
+                                    try: raw_hrs = float(hrs_match.group(1))
+                                    except: pass
                                 break
 
                         acc.tier_num = matched_tier
@@ -572,11 +692,8 @@ class CloudSystemManager:
                                 acc.next_tier = "Max Level Reached! 👑"
                                 acc.remaining_hours = 0.0
                                 acc.progress_percent = 100.0
-                        print(f"📊 [Discord Profile API v9] {acc.username}: Verified Tier {matched_tier} ({acc.total_hours} hrs)", flush=True)
-        except Exception as e:
-            print(f"⚠️ Could not sync Discord profile for {acc.username}: {e}", flush=True)
+        except: pass
 
-    # Background loop: Re-fetches real badge progress every 5 minutes (300 seconds)
     async def _badge_refresh_loop(self):
         try:
             while True:
@@ -585,132 +702,91 @@ class CloudSystemManager:
                     if acc.user_id and acc.token:
                         await self.update_account_badge_from_discord(acc)
                         await self.save_account_to_db(acc)
-        except asyncio.CancelledError:
-            pass
+        except: pass
 
     async def verify_token_and_membership(self, token: str):
         headers = {"Authorization": token, "User-Agent": USER_AGENT}
         async with aiohttp.ClientSession() as session:
-            async with session.get("https://discord.com/api/v10/users/@me", headers=headers, timeout=8) as r1:
-                if r1.status == 401:
-                    return False, "Invalid or expired Discord Token.", None, False
-                if r1.status != 200:
-                    return False, f"Discord API Error (HTTP {r1.status})", None, False
+            async with session.get("https://discord.com/api/v10/users/@me?with_analytics_token=true", headers=headers, timeout=8) as r1:
+                if r1.status == 401: return False, "Invalid Discord Token.", None, False
+                if r1.status != 200: return False, f"API Error ({r1.status})", None, False
                 user_info = await r1.json()
 
             target_gid = str(self.guild_id)
             async with session.get("https://discord.com/api/v10/users/@me/guilds", headers=headers, timeout=8) as r2:
                 if r2.status == 200:
                     user_guilds = await r2.json()
-                    member_guild_ids = [str(g.get("id")) for g in user_guilds if "id" in g]
-                    if target_gid not in member_guild_ids:
-                        return False, "This account is not in our server. You must join first!", user_info, True
-                else:
-                    return False, "Could not verify server membership.", user_info, False
-
+                    if str(self.guild_id) not in [str(g.get("id")) for g in user_guilds if "id" in g]:
+                        return False, "You must join our server first!", user_info, True
+                else: return False, "Could not verify server membership.", user_info, False
         return True, "Valid", user_info, False
 
     async def init_mongo(self):
-        if not MONGO_URI:
-            print("⚠️ MONGO_URI not provided. Storing in-memory.", flush=True)
-            return
+        if not MONGO_URI: return
         try:
             self.mongo_client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
             self.db = self.mongo_client["streamer_badge_db"]
-            cursor = self.db.accounts.find({})
-            async for doc in cursor:
+            async for doc in self.db.accounts.find({}):
                 acc_id = doc["acc_id"]
                 self.accounts[acc_id] = ManagedAccount(
-                    acc_id=acc_id,
-                    token=doc["token"],
-                    role=doc["role"],
-                    guild_id=self.guild_id,
-                    channel_id=DEFAULT_CHANNEL_ID,
-                    owner_id=doc.get("owner_id", "global"),
-                    scope=doc.get("scope", "community" if doc.get("owner_id") == "admin" else "private"),
-                    username=doc.get("username", "Saved Account"),
-                    avatar_url=doc.get("avatar_url"),
-                    tier_num=doc.get("tier_num", 0),
-                    raw_hours=doc.get("raw_hours"),
-                    total_hours=doc.get("total_hours", 0.0),
-                    current_tier=doc.get("current_tier", "No Badge (0h)"),
-                    next_tier=doc.get("next_tier", "Tier 1: Newcomer (1 hour)"),
-                    remaining_hours=doc.get("remaining_hours", 1.0),
+                    acc_id=acc_id, token=doc["token"], role=doc["role"],
+                    guild_id=self.guild_id, channel_id=DEFAULT_CHANNEL_ID,
+                    owner_id=doc.get("owner_id", "global"), scope=doc.get("scope", "private"),
+                    username=doc.get("username", "Saved Account"), avatar_url=doc.get("avatar_url"),
+                    analytics_token=doc.get("analytics_token", ""), tier_num=doc.get("tier_num", 0),
+                    total_hours=doc.get("total_hours", 0.0), current_tier=doc.get("current_tier", "No Badge (0h)"),
+                    next_tier=doc.get("next_tier", "Tier 1: Newcomer (1 hour)"), remaining_hours=doc.get("remaining_hours", 1.0),
                     progress_percent=doc.get("progress_percent", 0.0)
                 )
-            print(f"✅ Restored {len(self.accounts)} accounts from MongoDB!", flush=True)
-        except Exception as e:
-            print(f"⚠️ MongoDB Connection Failed: {e}", flush=True)
-            self.db = None
+        except: self.db = None
 
     async def save_account_to_db(self, acc: ManagedAccount):
         if self.db is not None:
             try:
-                await self.db.accounts.update_one(
-                    {"acc_id": acc.acc_id},
-                    {"$set": {
-                        "acc_id": acc.acc_id,
-                        "token": acc.token,
-                        "role": acc.role,
-                        "guild_id": acc.guild_id,
-                        "channel_id": acc.channel_id,
-                        "owner_id": acc.owner_id,
-                        "scope": acc.scope,
-                        "username": acc.username,
-                        "avatar_url": acc.avatar_url,
-                        "tier_num": acc.tier_num,
-                        "raw_hours": acc.raw_hours,
-                        "total_hours": acc.total_hours,
-                        "current_tier": acc.current_tier,
-                        "next_tier": acc.next_tier,
-                        "remaining_hours": acc.remaining_hours,
-                        "progress_percent": acc.progress_percent
-                    }},
-                    upsert=True
-                )
-            except Exception:
-                pass
+                await self.db.accounts.update_one({"acc_id": acc.acc_id}, {"$set": {
+                    "acc_id": acc.acc_id, "token": acc.token, "role": acc.role,
+                    "guild_id": acc.guild_id, "channel_id": acc.channel_id, "owner_id": acc.owner_id,
+                    "scope": acc.scope, "username": acc.username, "avatar_url": acc.avatar_url,
+                    "analytics_token": acc.analytics_token, "tier_num": acc.tier_num,
+                    "total_hours": acc.total_hours, "current_tier": acc.current_tier,
+                    "next_tier": acc.next_tier, "remaining_hours": acc.remaining_hours,
+                    "progress_percent": acc.progress_percent
+                }}, upsert=True)
+            except: pass
 
     async def remove_account_from_db(self, acc_id: str):
         if self.db is not None:
-            try:
-                await self.db.accounts.delete_one({"acc_id": acc_id})
-            except Exception:
-                pass
+            try: await self.db.accounts.delete_one({"acc_id": acc_id})
+            except: pass
 
     async def balance_and_pair_streams(self):
         await asyncio.sleep(3)
-        active_streamers = [a for a in self.accounts.values() if a.role == "streamer" and a.is_connected and a.stream_key]
-        active_watchers = [a for a in self.accounts.values() if a.role == "watcher" and a.is_connected]
+        streamers = [a for a in self.accounts.values() if a.role == "streamer" and a.is_connected and a.stream_key]
+        watchers = [a for a in self.accounts.values() if a.role == "watcher" and a.is_connected]
 
-        private_watchers = [w for w in active_watchers if w.scope == "private"]
-        for pw in private_watchers:
-            my_streamers = [s for s in active_streamers if s.owner_id == pw.owner_id]
-            for s in my_streamers:
+        for pw in [w for w in watchers if w.scope == "private"]:
+            for s in [s for s in streamers if s.owner_id == pw.owner_id]:
                 s_key = s.stream_key or s.build_stream_key()
                 if s_key not in pw.watching_streams:
                     await pw.watch_target(s_key)
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(4)
 
-        comm_watchers = [w for w in active_watchers if w.scope == "community"]
-        num_comm = len(comm_watchers)
-        if num_comm > 0 and len(active_streamers) > 0:
-            for idx, s in enumerate(active_streamers):
-                assigned_watcher = comm_watchers[idx % num_comm]
+        comm_watchers = [w for w in watchers if w.scope == "community"]
+        if comm_watchers and streamers:
+            for idx, s in enumerate(streamers):
+                assigned = comm_watchers[idx % len(comm_watchers)]
                 s_key = s.stream_key or s.build_stream_key()
-                if s_key not in assigned_watcher.watching_streams:
-                    await assigned_watcher.watch_target(s_key)
-                    await asyncio.sleep(5)
+                if s_key not in assigned.watching_streams:
+                    await assigned.watch_target(s_key)
+                    await asyncio.sleep(4)
 
     async def start_all(self):
         self.is_running = True
         self.ensure_background_tasks()
-        print("🚀 Starting all accounts...", flush=True)
         for acc in self.accounts.values():
             if not acc.running:
                 await acc.start()
-                await asyncio.sleep(5)
-        await self.send_webhook("🚀 System: All accounts initiated.")
+                await asyncio.sleep(4)
 
     async def stop_all(self):
         self.is_running = False
@@ -718,35 +794,26 @@ class CloudSystemManager:
             if acc.running:
                 await acc.stop()
                 await self.save_account_to_db(acc)
-        print("🛑 All accounts stopped.", flush=True)
-        await self.send_webhook("🛑 System: All accounts halted.")
 
     async def _periodic_rebalance_loop(self):
         try:
             while True:
                 await self.balance_and_pair_streams()
                 await asyncio.sleep(60)
-        except asyncio.CancelledError:
-            pass
+        except: pass
 
     async def _three_hour_cooldown_loop(self):
         try:
             while True:
                 await asyncio.sleep(3 * 3600)
-                has_active = any(a.is_connected for a in self.accounts.values())
-                if not has_active:
-                    continue
-
-                print("☕ [Anti-Rate-Limit] 3-minute cooldown rest for all active accounts...", flush=True)
+                if not any(a.is_connected for a in self.accounts.values()): continue
                 for acc in self.accounts.values():
                     if acc.is_connected and acc.ws and not acc.ws.closed:
                         acc.cooldown_active = True
                         acc.status = "Cooldown Rest (3 mins) ☕"
                         acc.watching_streams.clear()
                         await acc.ws.send_json({"op": 4, "d": {"guild_id": acc.guild_id, "channel_id": None, "self_mute": True, "self_deaf": True}})
-
                 await asyncio.sleep(180)
-                print("🔄 [Anti-Rate-Limit] Resuming accounts after rest...", flush=True)
                 for acc in self.accounts.values():
                     if acc.running and acc.ws and not acc.ws.closed:
                         acc.cooldown_active = False
@@ -759,50 +826,15 @@ class CloudSystemManager:
                             await acc.ws.send_json({"op": 22, "d": {"stream_key": acc.stream_key, "paused": False}})
                             acc.status = "Live Streaming 📺"
                 await self.balance_and_pair_streams()
-        except asyncio.CancelledError:
-            pass
+        except: pass
 
-    # Real DB auto-save loop: Saves state without fake local counter ticks
     async def _auto_save_loop(self):
         try:
             while True:
-                await asyncio.sleep(30)
+                await asyncio.sleep(60)
                 for acc in self.accounts.values():
-                    if acc.running:
-                        await self.save_account_to_db(acc)
-        except asyncio.CancelledError:
-            pass
-
-    async def send_webhook(self, title: str):
-        if not WEBHOOK_URL:
-            return
-        fields = []
-        for acc in self.accounts.values():
-            if acc.role == "streamer":
-                fields.append({
-                    "name": f"📺 {acc.username} ({acc.total_hours}h)",
-                    "value": f"Current: {acc.current_tier}\nNext: {acc.next_tier}\nRemaining: {acc.remaining_hours}h",
-                    "inline": True
-                })
-        if not fields:
-            fields.append({"name": "Active Accounts", "value": "None currently active", "inline": False})
-
-        payload = {
-            "username": "ScreenShare Cloud Monitor",
-            "avatar_url": "https://cdn.discordapp.com/emojis/1041155314777309244.webp",
-            "embeds": [{
-                "title": title, "color": 5793266, "fields": fields,
-                "footer": {"text": "Discord Profile v9 Verified • Railway"}
-            }]
-        }
-        try:
-            req = urllib.request.Request(
-                WEBHOOK_URL, data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "User-Agent": USER_AGENT}, method="POST"
-            )
-            urllib.request.urlopen(req, timeout=10)
-        except Exception:
-            pass
+                    if acc.running: await self.save_account_to_db(acc)
+        except: pass
 
 manager = CloudSystemManager()
 routes = web.RouteTableDef()
@@ -810,31 +842,22 @@ routes = web.RouteTableDef()
 @web.middleware
 async def session_cookie_middleware(request, handler):
     sess_id = request.cookies.get("spoofer_session")
-    is_new = False
-    if not sess_id:
-        sess_id = "sess_" + uuid.uuid4().hex
-        is_new = True
+    is_new = not sess_id
+    if is_new: sess_id = "sess_" + uuid.uuid4().hex
     request["session_id"] = sess_id
-    response = await handler(request)
-    if is_new:
-        response.set_cookie(
-            "spoofer_session", sess_id,
-            max_age=31536000, httponly=True, samesite="Lax"
-        )
-    return response
+    resp = await handler(request)
+    if is_new: resp.set_cookie("spoofer_session", sess_id, max_age=31536000, httponly=True, samesite="Lax")
+    return resp
 
 @routes.get("/")
-async def handle_index(request):
-    return web.FileResponse("public/index.html")
+async def handle_index(request): return web.FileResponse("public/index.html")
 
-# Security fix: Strictly check password only (removed username check)
 @routes.post("/api/admin/login")
 async def handle_admin_login(request):
     data = await request.json()
-    pwd = data.get("password", "").strip()
-    if pwd == ADMIN_SECRET:
+    if data.get("password", "") == ADMIN_SECRET:
         resp = web.json_response({"success": True})
-        resp.set_cookie("admin_token", ADMIN_SECRET, max_age=86400 * 7, httponly=True, samesite="Lax")
+        resp.set_cookie("admin_token", ADMIN_SECRET, max_age=86400*7, httponly=True, samesite="Lax")
         return resp
     return web.json_response({"success": False, "error": "Invalid admin password!"})
 
@@ -847,175 +870,86 @@ async def handle_admin_logout(request):
 @routes.get("/api/status")
 async def handle_status(request):
     sess_id = request.get("session_id", "")
-    admin_cookie = request.cookies.get("admin_token", "")
-    admin_header = request.headers.get("X-Admin-Token", "")
-    is_admin = (admin_cookie == ADMIN_SECRET or admin_header == ADMIN_SECRET)
-
-    accs = []
-    for acc in manager.accounts.values():
-        is_owner = is_admin or (acc.owner_id == sess_id)
-
-        accs.append({
-            "id": acc.acc_id,
-            "role": acc.role,
-            "scope": acc.scope,
-            "username": acc.username,
-            "avatar": acc.avatar_url,
-            "maskedToken": acc.mask_token(),
-            "status": acc.status,
-            "connected": acc.is_connected,
-            "running": acc.running,
-            "uptime": acc.get_uptime_string(),
-            "tierNum": acc.tier_num,
-            "totalHours": round(acc.total_hours, 2),
-            "hasRawHours": acc.raw_hours is not None,
-            "currentTier": acc.current_tier,
-            "nextTier": acc.next_tier,
-            "remainingHours": round(acc.remaining_hours, 2),
-            "progressPercent": round(acc.progress_percent, 1),
-            "isOwner": is_owner
-        })
-
-    # Sort streamers by real Discord hours descending
+    is_admin = (request.cookies.get("admin_token") == ADMIN_SECRET or request.headers.get("X-Admin-Token") == ADMIN_SECRET)
+    accs = [{
+        "id": a.acc_id, "role": a.role, "scope": a.scope, "username": a.username, "avatar": a.avatar_url,
+        "maskedToken": a.mask_token(), "status": a.status, "connected": a.is_connected, "running": a.running,
+        "uptime": a.get_uptime_string(), "totalHours": round(a.total_hours, 2), "currentTier": a.current_tier,
+        "nextTier": a.next_tier, "remainingHours": round(a.remaining_hours, 2), "progressPercent": round(a.progress_percent, 1),
+        "telemetryStatus": a.telemetry_status,
+        "isOwner": is_admin or (a.owner_id == sess_id)
+    } for a in manager.accounts.values()]
     accs.sort(key=lambda x: (0 if x["role"] == "streamer" else 1, -x["totalHours"]))
-
     return web.json_response({
-        "isRunning": manager.is_running,
-        "mongoConnected": manager.db is not None,
-        "guildName": manager.guild_name,
-        "guildId": manager.guild_id,
-        "channelId": DEFAULT_CHANNEL_ID,
-        "serverInvite": f"https://discord.gg/{SERVER_INVITE_CODE}",
-        "isAdmin": is_admin,
-        "accounts": accs
+        "isRunning": manager.is_running, "mongoConnected": manager.db is not None, "guildName": manager.guild_name,
+        "guildId": manager.guild_id, "channelId": DEFAULT_CHANNEL_ID, "serverInvite": f"https://discord.gg/{SERVER_INVITE_CODE}",
+        "isAdmin": is_admin, "accounts": accs
     })
 
 @routes.post("/api/accounts/add")
 async def handle_add(request):
     data = await request.json()
-    token = data.get("token", "").strip()
-    role = data.get("role", "streamer")
+    token, role = data.get("token", "").strip(), data.get("role", "streamer")
+    if not token: return web.json_response({"success": False, "error": "Token empty."})
     sess_id = request.get("session_id", "global")
-    admin_cookie = request.cookies.get("admin_token", "")
-    admin_header = request.headers.get("X-Admin-Token", "")
-    is_admin = (admin_cookie == ADMIN_SECRET or admin_header == ADMIN_SECRET)
-
-    if not token:
-        return web.json_response({"success": False, "error": "Token cannot be empty."})
-
-    valid, msg, user_info, requires_join = await manager.verify_token_and_membership(token)
-    if not valid:
-        return web.json_response({
-            "success": False,
-            "error": msg,
-            "requires_join": requires_join,
-            "invite": f"https://discord.gg/{SERVER_INVITE_CODE}"
-        })
-
-    u_id = user_info.get("id")
-    acc_id = str(uuid.uuid4())[:8]
-    av = user_info.get("avatar")
-    avatar_url = f"https://cdn.discordapp.com/avatars/{u_id}/{av}.png?size=128" if av else f"https://cdn.discordapp.com/embed/avatars/{int(u_id or 0) % 5}.png"
-
-    scope = "community" if is_admin else "private"
-
+    is_admin = (request.cookies.get("admin_token") == ADMIN_SECRET or request.headers.get("X-Admin-Token") == ADMIN_SECRET)
+    valid, msg, u_info, req_join = await manager.verify_token_and_membership(token)
+    if not valid: return web.json_response({"success": False, "error": msg, "requires_join": req_join})
+    u_id, analytics = u_info.get("id"), u_info.get("analytics_token", "")
+    av = u_info.get("avatar")
+    av_url = f"https://cdn.discordapp.com/avatars/{u_id}/{av}.png?size=128" if av else f"https://cdn.discordapp.com/embed/avatars/{int(u_id or 0)%5}.png"
     acc = ManagedAccount(
-        acc_id=acc_id,
-        token=token,
-        role=role,
-        guild_id=manager.guild_id,
-        channel_id=DEFAULT_CHANNEL_ID,
-        owner_id="admin" if is_admin else sess_id,
-        scope=scope,
-        username=user_info.get("username", "DiscordUser"),
-        avatar_url=avatar_url
+        acc_id=str(uuid.uuid4())[:8], token=token, role=role, guild_id=manager.guild_id, channel_id=DEFAULT_CHANNEL_ID,
+        owner_id="admin" if is_admin else sess_id, scope="community" if is_admin else "private",
+        username=u_info.get("username", "User"), avatar_url=av_url, analytics_token=analytics
     )
     acc.user_id = u_id
-    manager.accounts[acc_id] = acc
-
-    # Fetch real Discord profile badge immediately upon adding
+    manager.accounts[acc.acc_id] = acc
     await manager.update_account_badge_from_discord(acc)
     await manager.save_account_to_db(acc)
-
     manager.ensure_background_tasks()
     await acc.start()
     asyncio.create_task(manager.balance_and_pair_streams())
-
-    return web.json_response({"success": True, "username": acc.username, "scope": scope})
+    return web.json_response({"success": True, "username": acc.username})
 
 @routes.post("/api/accounts/toggle")
 async def handle_toggle(request):
-    data = await request.json()
-    acc_id = data.get("id")
-    sess_id = request.get("session_id", "")
-    admin_cookie = request.cookies.get("admin_token", "")
-    admin_header = request.headers.get("X-Admin-Token", "")
-    is_admin = (admin_cookie == ADMIN_SECRET or admin_header == ADMIN_SECRET)
-
-    if acc_id not in manager.accounts:
-        return web.json_response({"success": False, "error": "Account not found."})
-
-    acc = manager.accounts[acc_id]
-    if not is_admin and acc.owner_id != sess_id:
-        return web.json_response({"success": False, "error": "Unauthorized: You can only control your own accounts!"})
-
+    data, sess_id = await request.json(), request.get("session_id", "")
+    is_admin = (request.cookies.get("admin_token") == ADMIN_SECRET or request.headers.get("X-Admin-Token") == ADMIN_SECRET)
+    acc = manager.accounts.get(data.get("id"))
+    if not acc: return web.json_response({"success": False, "error": "Not found."})
+    if not is_admin and acc.owner_id != sess_id: return web.json_response({"success": False, "error": "Unauthorized!"})
     if acc.running:
         await acc.stop()
-        await manager.save_account_to_db(acc)
-        return web.json_response({"success": True, "running": False, "status": "Idle 🛑"})
+        return web.json_response({"success": True, "running": False})
     else:
         manager.ensure_background_tasks()
         await acc.start()
-        await manager.save_account_to_db(acc)
         asyncio.create_task(manager.balance_and_pair_streams())
-        return web.json_response({"success": True, "running": True, "status": "Connecting... ⏳"})
+        return web.json_response({"success": True, "running": True})
 
 @routes.post("/api/accounts/remove")
 async def handle_remove(request):
-    data = await request.json()
-    acc_id = data.get("id")
-    sess_id = request.get("session_id", "")
-    admin_cookie = request.cookies.get("admin_token", "")
-    admin_header = request.headers.get("X-Admin-Token", "")
-    is_admin = (admin_cookie == ADMIN_SECRET or admin_header == ADMIN_SECRET)
-
-    if acc_id not in manager.accounts:
-        return web.json_response({"success": False, "error": "Account not found."})
-
-    acc = manager.accounts[acc_id]
-    if not is_admin and acc.owner_id != sess_id:
-        return web.json_response({"success": False, "error": "Unauthorized: You can only delete your own accounts!"})
-
+    data, sess_id = await request.json(), request.get("session_id", "")
+    is_admin = (request.cookies.get("admin_token") == ADMIN_SECRET or request.headers.get("X-Admin-Token") == ADMIN_SECRET)
+    acc = manager.accounts.get(data.get("id"))
+    if not acc: return web.json_response({"success": False, "error": "Not found."})
+    if not is_admin and acc.owner_id != sess_id: return web.json_response({"success": False, "error": "Unauthorized!"})
     await acc.stop()
-    del manager.accounts[acc_id]
-    await manager.remove_account_from_db(acc_id)
+    del manager.accounts[acc.acc_id]
+    await manager.remove_account_from_db(acc.acc_id)
     return web.json_response({"success": True})
 
 @routes.post("/api/start")
 async def handle_start(request):
-    admin_cookie = request.cookies.get("admin_token", "")
-    admin_header = request.headers.get("X-Admin-Token", "")
-    if admin_cookie != ADMIN_SECRET and admin_header != ADMIN_SECRET:
-        return web.json_response({"success": False, "error": "Admin privileges required!"})
+    if request.cookies.get("admin_token") != ADMIN_SECRET and request.headers.get("X-Admin-Token") != ADMIN_SECRET: return web.json_response({"success": False})
     await manager.start_all()
     return web.json_response({"success": True})
 
 @routes.post("/api/stop")
 async def handle_stop(request):
-    admin_cookie = request.cookies.get("admin_token", "")
-    admin_header = request.headers.get("X-Admin-Token", "")
-    if admin_cookie != ADMIN_SECRET and admin_header != ADMIN_SECRET:
-        return web.json_response({"success": False, "error": "Admin privileges required!"})
+    if request.cookies.get("admin_token") != ADMIN_SECRET and request.headers.get("X-Admin-Token") != ADMIN_SECRET: return web.json_response({"success": False})
     await manager.stop_all()
-    return web.json_response({"success": True})
-
-@routes.post("/api/webhook/test")
-async def handle_webhook_test(request):
-    admin_cookie = request.cookies.get("admin_token", "")
-    admin_header = request.headers.get("X-Admin-Token", "")
-    if admin_cookie != ADMIN_SECRET and admin_header != ADMIN_SECRET:
-        return web.json_response({"success": False, "error": "Admin privileges required!"})
-    await manager.send_webhook("🔔 Admin Test: Webhook verified successfully!")
     return web.json_response({"success": True})
 
 app = web.Application(middlewares=[session_cookie_middleware])
@@ -1023,17 +957,14 @@ app.add_routes(routes)
 app.router.add_static("/public/", path="public", name="public")
 
 async def main():
-    print(f"🚀 Initializing Community Badge Booster Server...", flush=True)
     await manager.resolve_guild()
     await manager.init_mongo()
     manager.ensure_background_tasks()
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
-    print(f"🌐 Server Live on Port: {PORT} (Target Guild: {manager.guild_id})", flush=True)
+    print(f"🌐 Server Live on Port: {PORT}", flush=True)
     await site.start()
-    while True:
-        await asyncio.sleep(3600)
+    while True: await asyncio.sleep(3600)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == "__main__": asyncio.run(main())
