@@ -23,8 +23,6 @@
 <body class="min-h-screen p-4 md:p-8 flex flex-col justify-between">
 
   <div class="max-w-6xl mx-auto w-full space-y-6">
-
-    <!-- Header Bar -->
     <header class="card-glass rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-4 border-b border-indigo-500/20">
       <div class="flex items-center gap-4">
         <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white text-2xl shadow-lg glow-purple">
@@ -36,28 +34,24 @@
           </h1>
           <p class="text-xs text-gray-400 flex items-center gap-2 mt-1">
             <span class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            Discord Profile v9 Verified • Live Community Leaderboard
+            Discord Profile v9 Verified • RTP Media & Science Telemetry
           </p>
         </div>
       </div>
 
-      <!-- Controls & Admin Toggle -->
       <div class="flex items-center gap-3">
         <a href="https://discord.gg/rAx625W8Gn" target="_blank" class="px-4 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-2 transition-all">
           <i class="fa-brands fa-discord"></i> Join Official Server
         </a>
-
         <button id="adminLoginBtn" onclick="openAdminModal()" class="px-4 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-2 transition-all border border-gray-700">
           <i class="fa-solid fa-lock"></i> Admin Portal
         </button>
-
         <button id="adminLogoutBtn" onclick="adminLogout()" class="px-4 py-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 text-xs font-semibold items-center gap-2 transition-all border border-amber-500/30 hidden">
           <i class="fa-solid fa-crown text-amber-400"></i> Admin Session (Logout)
         </button>
       </div>
     </header>
 
-    <!-- Top Stats -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div class="card-glass rounded-xl p-4 flex items-center gap-4">
         <div class="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-lg">
@@ -68,7 +62,6 @@
           <span id="systemStatusBadge" class="text-sm font-bold text-gray-300">Checking...</span>
         </div>
       </div>
-
       <div class="card-glass rounded-xl p-4 flex items-center gap-4">
         <div class="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center text-lg">
           <i class="fa-solid fa-database"></i>
@@ -78,7 +71,6 @@
           <span id="mongoStatusBadge" class="text-sm font-bold text-gray-300">Checking...</span>
         </div>
       </div>
-
       <div class="card-glass rounded-xl p-4 flex items-center gap-4">
         <div class="w-10 h-10 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center text-lg">
           <i class="fa-solid fa-video"></i>
@@ -88,7 +80,6 @@
           <span id="streamerCount" class="text-sm font-bold text-white">0</span>
         </div>
       </div>
-
       <div class="card-glass rounded-xl p-4 flex items-center gap-4">
         <div class="w-10 h-10 rounded-lg bg-pink-500/10 text-pink-400 flex items-center justify-center text-lg">
           <i class="fa-solid fa-eye"></i>
@@ -100,13 +91,8 @@
       </div>
     </div>
 
-    <!-- Main Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-      <!-- Left Column: Add Account & Admin Actions -->
       <div class="space-y-6">
-
-        <!-- Target Info -->
         <div class="card-glass rounded-2xl p-6 border border-indigo-500/30">
           <h2 class="text-xs font-bold text-indigo-300 uppercase tracking-wider mb-3 flex items-center gap-2">
             <i class="fa-solid fa-shield-halved"></i> Configured Target Room
@@ -127,12 +113,10 @@
           </div>
         </div>
 
-        <!-- Add Account Card -->
         <div class="card-glass rounded-2xl p-6 space-y-4">
           <h2 class="text-base font-bold text-white flex items-center gap-2">
             <i class="fa-solid fa-plus-circle text-indigo-400"></i> Register Account
           </h2>
-
           <form id="addAccountForm" onsubmit="addAccount(event)" class="space-y-4">
             <div>
               <label class="block text-xs font-semibold text-gray-400 mb-1.5">Discord User Token</label>
@@ -144,7 +128,6 @@
                 </button>
               </div>
             </div>
-
             <div>
               <label class="block text-xs font-semibold text-gray-400 mb-1.5">Account Role</label>
               <div class="grid grid-cols-2 gap-2">
@@ -154,7 +137,6 @@
                     <i class="fa-solid fa-video block mb-1 text-base"></i> Streamer
                   </div>
                 </label>
-
                 <label class="cursor-pointer">
                   <input type="radio" name="role" value="watcher" class="peer hidden">
                   <div class="p-3 text-center rounded-xl bg-gray-900/60 border border-gray-800 peer-checked:border-pink-500 peer-checked:bg-pink-900/20 text-xs font-semibold text-gray-300 peer-checked:text-pink-300 transition-all">
@@ -166,16 +148,13 @@
                 Note: Regular watchers automatically watch your own streamer account for dedicated watch-time.
               </p>
             </div>
-
             <button id="addSubmitBtn" type="submit" class="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2">
               <i class="fa-solid fa-bolt"></i> Verify & Connect
             </button>
           </form>
-
           <p id="formFeedback" class="text-xs text-center font-medium hidden"></p>
         </div>
 
-        <!-- Master Admin Controls -->
         <div id="adminMasterControls" class="card-glass rounded-2xl p-6 space-y-3 hidden">
           <h3 class="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
             <i class="fa-solid fa-crown"></i> Admin Master Controls
@@ -183,14 +162,9 @@
           <button id="masterToggleBtn" onclick="toggleSystem()" class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2">
             <i class="fa-solid fa-play"></i> Start All Accounts
           </button>
-          <button onclick="testWebhook()" class="w-full py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center justify-center gap-2 border border-gray-700">
-            <i class="fa-solid fa-bell"></i> Send Discord Test Webhook
-          </button>
         </div>
-
       </div>
 
-      <!-- Right Column: Live Leaderboard & Accounts List -->
       <div class="lg:col-span-2 space-y-4">
         <div class="flex items-center justify-between">
           <h2 class="text-base font-bold text-white flex items-center gap-2">
@@ -198,7 +172,6 @@
           </h2>
           <span id="totalAccountCount" class="text-xs text-gray-400">0 Accounts Registered</span>
         </div>
-
         <div id="accountsList" class="space-y-3 custom-scroll max-h-[750px] overflow-y-auto pr-1">
           <div class="card-glass rounded-xl p-8 text-center text-gray-500 text-xs">
             <i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2 text-indigo-500"></i>
@@ -208,10 +181,9 @@
       </div>
 
     </div>
-
   </div>
 
-  <!-- FLOATING USER CAPSULE / HUD (Bottom Left) -->
+  <!-- FLOATING USER CAPSULE (Bottom Left) -->
   <div id="userFloatingCapsule" class="fixed bottom-6 left-6 z-40 max-w-sm w-full hidden">
     <div class="capsule-glass rounded-2xl p-4 transition-all duration-300 border border-indigo-500/30">
       <div class="flex items-center justify-between pb-3 border-b border-gray-800/80">
@@ -250,13 +222,12 @@
               </div>
             </div>
           </div>
-
           <button id="capsuleToggleBtn" onclick="toggleCurrentCapsuleAccount()" class="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all bg-rose-600 hover:bg-rose-500 text-white">
             <i class="fa-solid fa-power-off"></i> Disconnect
           </button>
         </div>
 
-        <div id="capsuleStreamerStats" class="space-y-1 bg-gray-950/60 p-2 rounded-xl border border-gray-800/80">
+        <div id="capsuleStreamerStats" class="space-y-1.5 bg-gray-950/60 p-2 rounded-xl border border-gray-800/80">
           <div class="flex justify-between text-[11px] font-semibold">
             <span id="capsuleTier" class="text-indigo-300 font-bold">Tier 1</span>
             <span id="capsuleHours" class="text-emerald-400 font-mono font-bold">0 hrs</span>
@@ -266,14 +237,16 @@
           </div>
           <div class="flex justify-between text-[9px] text-gray-400 pt-0.5">
             <span id="capsuleNextTier">Next: Tier 2</span>
-            <span id="capsuleRemainingHours" class="text-amber-400 font-semibold">0h left</span>
+            <div class="flex items-center gap-1.5">
+              <span id="capsuleTelemetry" class="text-[9px]" title="Science API Telemetry Status">Offline</span>
+              <span id="capsuleRemainingHours" class="text-amber-400 font-semibold">0h left</span>
+            </div>
           </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Admin Login Modal -->
   <div id="adminModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="card-glass rounded-2xl max-w-sm w-full p-6 text-center space-y-4 border border-amber-500/40">
       <div class="w-14 h-14 rounded-full bg-amber-500/20 text-amber-400 mx-auto flex items-center justify-center text-2xl">
@@ -281,24 +254,15 @@
       </div>
       <h3 class="text-lg font-bold text-white">Admin Authentication</h3>
       <p class="text-xs text-gray-400">Enter master administrative passkey to unlock system management.</p>
-      
-      <input id="adminPassInput" type="password" placeholder="Enter Admin Passkey..."
-        class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-xs text-white text-center tracking-widest focus:outline-none focus:border-amber-500">
-
+      <input id="adminPassInput" type="password" placeholder="Enter Admin Passkey..." class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-xs text-white text-center tracking-widest focus:outline-none focus:border-amber-500">
       <p id="adminFeedback" class="text-xs text-rose-400 hidden"></p>
-
       <div class="flex gap-2 pt-2">
-        <button onclick="closeAdminModal()" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">
-          Cancel
-        </button>
-        <button onclick="submitAdminLogin()" class="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-white">
-          Authenticate
-        </button>
+        <button onclick="closeAdminModal()" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">Cancel</button>
+        <button onclick="submitAdminLogin()" class="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-white">Authenticate</button>
       </div>
     </div>
   </div>
 
-  <!-- Server Join Modal -->
   <div id="membershipModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="card-glass rounded-2xl max-w-md w-full p-6 text-center space-y-4 border border-indigo-500/40">
       <div class="w-16 h-16 rounded-full bg-indigo-600/20 text-indigo-400 mx-auto flex items-center justify-center text-3xl">
@@ -309,9 +273,7 @@
         This Discord account is not in our official server. You must join our server first before activating your streamer or watcher account!
       </p>
       <div class="flex gap-3 pt-2">
-        <button onclick="document.getElementById('membershipModal').classList.add('hidden')" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">
-          Cancel
-        </button>
+        <button onclick="document.getElementById('membershipModal').classList.add('hidden')" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">Cancel</button>
         <a href="https://discord.gg/rAx625W8Gn" target="_blank" onclick="document.getElementById('membershipModal').classList.add('hidden')" class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center justify-center gap-2 shadow-lg">
           <i class="fa-solid fa-arrow-up-right-from-square"></i> Click to Join Server
         </a>
@@ -347,39 +309,21 @@
       document.getElementById('adminModal').classList.remove('hidden');
     }
 
-    function closeAdminModal() {
-      document.getElementById('adminModal').classList.add('hidden');
-    }
+    function closeAdminModal() { document.getElementById('adminModal').classList.add('hidden'); }
 
     async function submitAdminLogin() {
       const pass = document.getElementById('adminPassInput').value.trim();
       const feedback = document.getElementById('adminFeedback');
       if (!pass) return;
-
       try {
-        const res = await fetch('/api/admin/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: pass })
-        });
+        const res = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pass }) });
         const data = await res.json();
-        if (data.success) {
-          closeAdminModal();
-          poll();
-        } else {
-          feedback.innerText = data.error || 'Authentication failed!';
-          feedback.classList.remove('hidden');
-        }
-      } catch (err) {
-        feedback.innerText = 'Network error.';
-        feedback.classList.remove('hidden');
-      }
+        if (data.success) { closeAdminModal(); poll(); }
+        else { feedback.innerText = data.error || 'Authentication failed!'; feedback.classList.remove('hidden'); }
+      } catch (err) { feedback.innerText = 'Network error.'; feedback.classList.remove('hidden'); }
     }
 
-    async function adminLogout() {
-      await fetch('/api/admin/logout', { method: 'POST' });
-      poll();
-    }
+    async function adminLogout() { await fetch('/api/admin/logout', { method: 'POST' }); poll(); }
 
     async function poll() {
       try {
@@ -417,26 +361,19 @@
         }
 
         const dbBadge = document.getElementById('mongoStatusBadge');
-        dbBadge.innerHTML = data.mongoConnected
-          ? '<span class="text-emerald-400">CONNECTED</span>'
-          : '<span class="text-amber-400">IN-MEMORY</span>';
+        dbBadge.innerHTML = data.mongoConnected ? '<span class="text-emerald-400">CONNECTED</span>' : '<span class="text-amber-400">IN-MEMORY</span>';
 
         const accounts = data.accounts || [];
         myAccounts = accounts.filter(a => a.isOwner);
 
         renderAccounts(accounts);
         renderFloatingCapsule();
-      } catch (err) {
-        console.error('Poll Error:', err);
-      }
+      } catch (err) {}
     }
 
     function renderFloatingCapsule() {
       const capsule = document.getElementById('userFloatingCapsule');
-      if (!myAccounts || myAccounts.length === 0) {
-        capsule.classList.add('hidden');
-        return;
-      }
+      if (!myAccounts || myAccounts.length === 0) { capsule.classList.add('hidden'); return; }
       capsule.classList.remove('hidden');
 
       if (currentCapsuleIdx >= myAccounts.length) currentCapsuleIdx = 0;
@@ -474,23 +411,24 @@
         document.getElementById('capsuleProgressBar').style.width = `${acc.progressPercent}%`;
         document.getElementById('capsuleNextTier').innerText = `Next: ${acc.nextTier}`;
         document.getElementById('capsuleRemainingHours').innerText = `${acc.remainingHours}h left`;
+        
+        const telemetryStatus = document.getElementById('capsuleTelemetry');
+        telemetryStatus.innerText = acc.telemetryStatus || 'Offline';
+        if(acc.telemetryStatus && acc.telemetryStatus.includes('🟢')) {
+            telemetryStatus.className = 'text-[9px] text-emerald-400 font-bold';
+        } else {
+            telemetryStatus.className = 'text-[9px] text-gray-500';
+        }
       } else {
         streamerStats.classList.add('hidden');
       }
 
-      const prevBtn = document.getElementById('capsulePrevBtn');
-      const nextBtn = document.getElementById('capsuleNextBtn');
-      const pageInd = document.getElementById('capsulePageIndicator');
-
+      const prevBtn = document.getElementById('capsulePrevBtn'), nextBtn = document.getElementById('capsuleNextBtn'), pageInd = document.getElementById('capsulePageIndicator');
       if (myAccounts.length > 1) {
-        prevBtn.classList.remove('hidden');
-        nextBtn.classList.remove('hidden');
-        pageInd.classList.remove('hidden');
+        prevBtn.classList.remove('hidden'); nextBtn.classList.remove('hidden'); pageInd.classList.remove('hidden');
         pageInd.innerText = `${currentCapsuleIdx + 1}/${myAccounts.length}`;
       } else {
-        prevBtn.classList.add('hidden');
-        nextBtn.classList.add('hidden');
-        pageInd.classList.add('hidden');
+        prevBtn.classList.add('hidden'); nextBtn.classList.add('hidden'); pageInd.classList.add('hidden');
       }
     }
 
@@ -511,12 +449,6 @@
       }
     }
 
-    async function toggleCurrentCapsuleAccount() {
-      if (!myAccounts || myAccounts.length === 0) return;
-      const acc = myAccounts[currentCapsuleIdx];
-      await toggleAccount(acc.id);
-    }
-
     function renderAccounts(accounts) {
       const container = document.getElementById('accountsList');
       document.getElementById('totalAccountCount').innerText = `${accounts.length} Accounts Registered`;
@@ -527,17 +459,11 @@
       document.getElementById('watcherCount').innerText = watchers;
 
       if (accounts.length === 0) {
-        container.innerHTML = `
-          <div class="card-glass rounded-xl p-8 text-center text-gray-500 text-xs">
-            <i class="fa-solid fa-ghost text-3xl mb-2 text-gray-600"></i>
-            <p>No active accounts yet. Register your token on the left!</p>
-          </div>
-        `;
+        container.innerHTML = `<div class="card-glass rounded-xl p-8 text-center text-gray-500 text-xs"><i class="fa-solid fa-ghost text-3xl mb-2 text-gray-600"></i><p>No active accounts yet. Register your token on the left!</p></div>`;
         return;
       }
 
       let streamerRank = 0;
-
       container.innerHTML = accounts.map(acc => {
         const isStreamer = acc.role === 'streamer';
         const roleColor = isStreamer ? 'purple' : 'pink';
@@ -592,20 +518,11 @@
               </div>
             `}
 
-            <!-- Action Controls (Toggle Start/Stop & Delete) -->
             <div class="flex items-center gap-1.5">
               ${acc.isOwner ? `
-                <button onclick="toggleAccount('${acc.id}')" class="p-2 text-xs rounded-lg transition-all ${acc.running ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'}" title="${acc.running ? 'Disconnect Account' : 'Connect Account'}">
-                  <i class="fa-solid fa-power-off"></i>
-                </button>
-                <button onclick="removeAccount('${acc.id}')" class="p-2 text-xs rounded-lg text-gray-400 hover:text-rose-400 transition-all hover:bg-gray-800" title="Delete Account">
-                  <i class="fa-solid fa-trash-can"></i>
-                </button>
-              ` : `
-                <span class="text-gray-700 p-2 text-xs" title="Community Account (Protected)">
-                  <i class="fa-solid fa-lock"></i>
-                </span>
-              `}
+                <button onclick="toggleAccount('${acc.id}')" class="p-2 text-xs rounded-lg transition-all ${acc.running ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'}" title="${acc.running ? 'Disconnect Account' : 'Connect Account'}"><i class="fa-solid fa-power-off"></i></button>
+                <button onclick="removeAccount('${acc.id}')" class="p-2 text-xs rounded-lg text-gray-400 hover:text-rose-400 transition-all hover:bg-gray-800" title="Delete Account"><i class="fa-solid fa-trash-can"></i></button>
+              ` : `<span class="text-gray-700 p-2 text-xs" title="Community Account (Protected)"><i class="fa-solid fa-lock"></i></span>`}
             </div>
           </div>
         `;
@@ -618,70 +535,38 @@
       const role = document.querySelector('input[name="role"]:checked').value;
       const feedback = document.getElementById('formFeedback');
       const submitBtn = document.getElementById('addSubmitBtn');
-
       if (!token) return;
 
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Checking Membership...';
-      feedback.className = 'text-xs text-center font-medium block text-indigo-400';
-      feedback.innerText = 'Verifying account with Discord API...';
+      submitBtn.disabled = true; submitBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Checking Profile...';
+      feedback.className = 'text-xs text-center font-medium block text-indigo-400'; feedback.innerText = 'Verifying account with Discord API...';
 
       try {
-        const res = await fetch('/api/accounts/add', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, role })
-        });
+        const res = await fetch('/api/accounts/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, role }) });
         const data = await res.json();
-
         if (data.success) {
           document.getElementById('tokenInput').value = '';
-          feedback.className = 'text-xs text-center font-medium block text-emerald-400';
-          feedback.innerText = `Connected successfully as @${data.username}!`;
-          poll();
-          setTimeout(() => feedback.classList.add('hidden'), 4000);
+          feedback.className = 'text-xs text-center font-medium block text-emerald-400'; feedback.innerText = `Connected successfully as @${data.username}!`;
+          poll(); setTimeout(() => feedback.classList.add('hidden'), 4000);
         } else {
-          if (data.requires_join) {
-            feedback.classList.add('hidden');
-            document.getElementById('membershipModal').classList.remove('hidden');
-          } else {
-            feedback.className = 'text-xs text-center font-medium block text-rose-400';
-            feedback.innerText = data.error || 'Failed to register account.';
-          }
+          if (data.requires_join) { feedback.classList.add('hidden'); document.getElementById('membershipModal').classList.remove('hidden'); }
+          else { feedback.className = 'text-xs text-center font-medium block text-rose-400'; feedback.innerText = data.error || 'Failed to register account.'; }
         }
-      } catch (err) {
-        feedback.className = 'text-xs text-center font-medium block text-rose-400';
-        feedback.innerText = 'Network request failed.';
-      } finally {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> Verify & Connect';
-      }
+      } catch (err) { feedback.className = 'text-xs text-center font-medium block text-rose-400'; feedback.innerText = 'Network request failed.'; }
+      finally { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> Verify & Connect'; }
     }
 
     async function toggleAccount(id) {
-      const res = await fetch('/api/accounts/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      });
+      const res = await fetch('/api/accounts/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
       const data = await res.json();
-      if (!data.success) {
-        alert(data.error || 'Could not toggle account.');
-      }
+      if (!data.success) alert(data.error || 'Could not toggle account.');
       poll();
     }
 
     async function removeAccount(id) {
       if (!confirm('Are you sure you want to remove this account?')) return;
-      const res = await fetch('/api/accounts/remove', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      });
+      const res = await fetch('/api/accounts/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
       const data = await res.json();
-      if (!data.success) {
-        alert(data.error || 'Could not remove account.');
-      }
+      if (!data.success) alert(data.error || 'Could not remove account.');
       poll();
     }
 
@@ -689,20 +574,11 @@
       const endpoint = isSystemRunning ? '/api/stop' : '/api/start';
       const res = await fetch(endpoint, { method: 'POST' });
       const data = await res.json();
-      if (!data.success) {
-        alert(data.error || 'Admin action failed.');
-      }
+      if (!data.success) alert(data.error || 'Admin action failed.');
       poll();
     }
 
-    async function testWebhook() {
-      const res = await fetch('/api/webhook/test', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) alert('Admin test notification sent to Discord!');
-    }
-
-    setInterval(poll, 3000);
-    poll();
+    setInterval(poll, 3000); poll();
   </script>
 </body>
 </html>
