@@ -31,7 +31,7 @@ GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "discord/1.0.9168 Chrome/128.0.6613.186 Electron/32.2.2 Safari/537.36"
+    "discord/1.0.9253 Chrome/148.0.7778.280 Electron/42.7.1 Safari/537.36"
 )
 
 STREAM_BADGE_MILESTONES = {
@@ -61,21 +61,44 @@ TIER_NAME_TO_NUM = {
     "phenomenon": 10,
 }
 
+UNRELATED_BADGE_PREFIXES = (
+    "nitro",
+    "premium",
+    "guild_booster",
+    "booster",
+    "hypesquad",
+    "quest",
+    "orb",
+    "game_time",
+    "game_variety",
+    "account_age",
+    "gifting",
+    "bug_hunter",
+    "early_supporter",
+    "staff",
+    "partner",
+    "certified_moderator",
+    "verified_developer",
+    "legacy_username",
+    "april_fools",
+    "last_meadow",
+)
+
 
 def make_super_properties() -> str:
     props = {
         "os": "Windows",
         "browser": "Discord Client",
         "release_channel": "stable",
-        "client_version": "1.0.9168",
-        "os_version": "10.0.22631",
+        "client_version": "1.0.9253",
+        "os_version": "10.0.26200",
         "os_arch": "x64",
         "app_arch": "x64",
         "system_locale": "en-US",
         "browser_user_agent": USER_AGENT,
-        "browser_version": "32.2.2",
-        "client_build_number": 343349,
-        "native_build_number": 53915,
+        "browser_version": "42.7.1",
+        "client_build_number": 594031,
+        "native_build_number": 88414,
         "client_event_source": None,
     }
     return base64.b64encode(json.dumps(props, separators=(",", ":")).encode()).decode()
@@ -811,7 +834,7 @@ class RTCVoiceSession:
                                 struct.pack_into(">I", disc_pkt, 4, self.ssrc)
                                 self.udp_socket.sendto(disc_pkt, (self.udp_ip, self.udp_port))
                                 loop = asyncio.get_running_loop()
-                                resp, _ = await asyncio.wait_for(loop.sock_recv(self.udp_socket, 74), timeout=5.0)
+                                resp = await asyncio.wait_for(loop.sock_recv(self.udp_socket, 74), timeout=5.0)
                                 if len(resp) >= 74:
                                     ext_ip = resp[8:72].decode("utf-8", errors="ignore").split("\x00", 1)[0]
                                     ext_port = struct.unpack_from(">H", resp, 72)[0]
@@ -970,7 +993,7 @@ class RTCVoiceSession:
                     raise
                 except WSCloseError as e:
                     print(f"❌ [{self.label}] RTCVoiceSession WS closed ({e.code}): {e.reason}", flush=True)
-                    if e.code in (4004, 4006, 4014) or attempt >= 3:
+                    if e.code in (4004, 4006, 4014, 4022) or attempt >= 3:
                         needs_gateway_refresh = True
                         break
                 except Exception as e:
@@ -1152,6 +1175,7 @@ class ManagedAccount:
         if rtc is self.voice_rtc:
             print(f"🔄 [{self.username}] Rejoining VC after Voice RTC disconnect...", flush=True)
             self.voice_rtc = None
+            await self._stop_all_stream_rtcs()
             await self.ws.send_json(
                 {
                     "op": 4,
@@ -1166,6 +1190,9 @@ class ManagedAccount:
             )
             if self.role == "streamer":
                 self._schedule_stream_launch()
+            else:
+                self._refresh_watcher_status()
+                asyncio.create_task(manager.balance_and_pair_streams())
         elif rtc.is_stream:
             target_key = None
             for k, v in list(self.stream_rtcs.items()):
@@ -1657,21 +1684,26 @@ class CloudSystemManager:
             desc = str(b.get("description") or b.get("name") or b.get("title") or "")
             desc_l = desc.lower()
 
+            is_unrelated = any(b_id.startswith(pref) for pref in UNRELATED_BADGE_PREFIXES)
             is_badge_19 = str(raw_badge_id) == "19"
-            is_streaming = (
+            has_tier_word = any(
+                re.search(rf"\b{name}\b", b_id.replace("_", " ") + " " + desc_l)
+                for name in TIER_NAME_TO_NUM
+                if name != "star"
+            )
+            is_streaming = (not is_unrelated) and (
                 is_badge_19
                 or b_id == "streaming"
                 or "stream" in b_id
                 or "stream" in desc_l
                 or "broadcast" in desc_l
                 or "بث" in desc_l
-                or any(re.search(rf"\b{name}\b", b_id.replace("_", " ")) for name in TIER_NAME_TO_NUM if name != "star")
+                or has_tier_word
                 or ("star" in b_id and "hour" in desc_l)
             )
             if not is_streaming:
                 continue
 
-            # 1) Discord Badge Directory format: `tiers` list + `current_tier` / `next_tier` keys
             tiers_list = b.get("tiers")
             curr_tier_key = b.get("current_tier")
             next_tier_key = b.get("next_tier")
@@ -1697,7 +1729,6 @@ class CloudSystemManager:
                                     next_tier_threshold = float(tv)
                             break
 
-            # 2) Numeric or named tier fields
             for tk in ("tier", "level", "stage", "current_tier"):
                 tv = b.get(tk)
                 if isinstance(tv, (int, float)) and not isinstance(tv, bool) and 1 <= int(tv) <= 10:
@@ -1728,7 +1759,6 @@ class CloudSystemManager:
                 if re.search(rf"\b{name}\b", b_id.replace("_", " ") + " " + desc_l):
                     matched_tier = max(matched_tier, t_num)
 
-            # 3) Explicit hours / seconds / minutes
             for hk in ("hours", "current_hours", "total_hours"):
                 hv = b.get(hk)
                 if isinstance(hv, (int, float)):
@@ -1744,7 +1774,6 @@ class CloudSystemManager:
                     if isinstance(mv, (int, float)) and mv > 0:
                         raw_hrs = float(mv) / 60.0
 
-            # 4) Badge Directory `progress` (list of dicts OR dict OR scalar)
             if raw_hrs is None:
                 prog = b.get("progress")
                 prog_item = (
@@ -1811,6 +1840,8 @@ class CloudSystemManager:
             "User-Agent": USER_AGENT,
             "X-Super-Properties": make_super_properties(),
             "X-Discord-Locale": "en-US",
+            "X-Discord-Timezone": "Africa/Cairo",
+            "Accept-Language": "en-US",
             "Origin": "https://discord.com",
             "Referer": "https://discord.com/channels/@me",
             "Accept": "*/*",
@@ -1823,11 +1854,12 @@ class CloudSystemManager:
         b19_status = None
         profile_status = None
         raw_b19_json = ""
+        raw_profile_badges = ""
 
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
-            # 1) /users/@me/badges (and fallback /users/{id}/badges if non-200)
+            # 1) Literal @me (and fallback /{uid})
             for b_ep in (
-                "https://discord.com/api/v9/users/%40me/badges",
+                "https://discord.com/api/v9/users/@me/badges",
                 f"https://discord.com/api/v9/users/{acc.user_id}/badges" if acc.user_id else None,
             ):
                 if not b_ep:
@@ -1846,17 +1878,24 @@ class CloudSystemManager:
                 except Exception as e:
                     badges_status = f"err:{e}"
 
-            # 2) Direct /users/@me/badges/19 (Streaming Badge ID = 19)
+            # 2) Direct badge 19 lookup
             if not raw_b19_json:
-                try:
-                    async with session.get("https://discord.com/api/v9/users/%40me/badges/19", headers=headers) as r_19:
-                        b19_status = r_19.status
-                        if r_19.status == 200:
-                            d19 = await r_19.json()
-                            raw_b19_json = json.dumps(d19, ensure_ascii=False)[:800]
-                            all_badge_objs.extend(self._extract_badge_objects(d19))
-                except Exception as e:
-                    b19_status = f"err:{e}"
+                for b19_ep in (
+                    "https://discord.com/api/v9/users/@me/badges/19",
+                    f"https://discord.com/api/v9/users/{acc.user_id}/badges/19" if acc.user_id else None,
+                ):
+                    if not b19_ep:
+                        continue
+                    try:
+                        async with session.get(b19_ep, headers=headers) as r_19:
+                            b19_status = r_19.status
+                            if r_19.status == 200:
+                                d19 = await r_19.json()
+                                raw_b19_json = json.dumps(d19, ensure_ascii=False)[:800]
+                                all_badge_objs.extend(self._extract_badge_objects(d19))
+                                break
+                    except Exception as e:
+                        b19_status = f"err:{e}"
 
             # 3) /users/{id}/profile
             if acc.user_id:
@@ -1866,9 +1905,13 @@ class CloudSystemManager:
                         profile_status = r_p.status
                         if r_p.status == 200:
                             p_data = await r_p.json()
-                            all_badge_objs.extend(self._extract_badge_objects(p_data.get("badges", [])))
+                            p_badges = p_data.get("badges", [])
+                            raw_profile_badges = json.dumps(p_badges, ensure_ascii=False)[:600]
+                            all_badge_objs.extend(self._extract_badge_objects(p_badges))
                             if isinstance(p_data.get("user_profile"), dict):
-                                all_badge_objs.extend(self._extract_badge_objects(p_data["user_profile"].get("badges", [])))
+                                all_badge_objs.extend(
+                                    self._extract_badge_objects(p_data["user_profile"].get("badges", []))
+                                )
                 except Exception as e:
                     profile_status = f"err:{e}"
 
@@ -1876,12 +1919,16 @@ class CloudSystemManager:
         acc.tier_num = matched_tier
         acc.raw_hours = raw_hrs
         acc.last_badge_refresh = time.monotonic()
-        acc.badge_debug_info = f"badges={badges_status}" + (f" b19={b19_status}" if b19_status is not None else "") + f" prof={profile_status}"
+        acc.badge_debug_info = (
+            f"badges={badges_status}"
+            + (f" b19={b19_status}" if b19_status is not None else "")
+            + f" prof={profile_status}"
+        )
 
         if acc.user_id and not acc._logged_badge_debug:
             acc._logged_badge_debug = True
             print(
-                f"🔍 [Badge Inspect] @{acc.username} | {acc.badge_debug_info} | tier={matched_tier} hrs={raw_hrs} | badge19={raw_b19_json or 'NOT_IN_RESPONSE'}",
+                f"🔍 [Badge Inspect] @{acc.username} | {acc.badge_debug_info} | tier={matched_tier} hrs={raw_hrs} | badge19={raw_b19_json or 'NONE'} | profile_badges={raw_profile_badges or '[]'}",
                 flush=True,
             )
 
