@@ -49,6 +49,20 @@ STREAM_BADGE_MILESTONES = {
     10: (5000.0, "Tier 10: Phenomenon (5,000+ hours)"),
 }
 
+TIER_NAME_TO_NUM = {
+    "newcomer": 1,
+    "fledgling": 2,
+    "breakout": 3,
+    "standout": 4,
+    "trendsetter": 5,
+    "headliner": 6,
+    "superstar": 7,
+    "star": 7,
+    "sensation": 8,
+    "visionary": 9,
+    "phenomenon": 10,
+}
+
 def make_super_properties() -> str:
     props = {
         "os": "Windows", "browser": "Discord Client", "release_channel": "stable",
@@ -93,7 +107,7 @@ def group_nals_into_frames(nals: list[bytes]) -> list[bytes]:
         nal_type = nal[0] & 0x1F
         current.extend(b"\x00\x00\x00\x01")
         current.extend(nal)
-        if nal_type in (1, 5):  # End of Access Unit (slices=1)
+        if nal_type in (1, 5):
             frames.append(bytes(current))
             current.clear()
     if current:
@@ -107,11 +121,11 @@ def load_video_frames() -> list[bytes]:
             print("🎞️ Generating pre-baked 5 FPS H.264 loop via FFmpeg...", flush=True)
             subprocess.run([
                 "ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=5", "-t", "6",
-                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+                "-threads", "1", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
                 "-profile:v", "baseline", "-level", "3.1", "-pix_fmt", "yuv420p",
                 "-b:v", "30k", "-maxrate", "40k", "-bufsize", "40k",
                 "-g", "5", "-keyint_min", "5", "-sc_threshold", "0", "-bf", "0",
-                "-x264-params", "slices=1:repeat-headers=1", "-f", "h264", path
+                "-x264-params", "slices=1:sliced-threads=0:repeat-headers=1", "-f", "h264", path
             ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
             print(f"⚠️ Could not generate H.264 file: {e}", flush=True)
@@ -291,6 +305,7 @@ class RTCVoiceSession:
         self._task = None
         self._hb_task = None
         self._media_task = None
+        self._logged_first_frame = False
         self.running = False
 
     def start(self):
@@ -345,9 +360,9 @@ class RTCVoiceSession:
         ntp_sec = int(now) + 2208988800
         ntp_frac = int((now - int(now)) * (1 << 32))
         sr = bytearray(28)
-        sr[0] = 0x80  # V=2, P=0, RC=0
-        sr[1] = 200   # PT=200 (RTCP Sender Report)
-        struct.pack_into(">H", sr, 2, 6)  # (28/4) - 1 = 6
+        sr[0] = 0x80
+        sr[1] = 200
+        struct.pack_into(">H", sr, 2, 6)
         struct.pack_into(">I", sr, 4, ssrc & 0xFFFFFFFF)
         struct.pack_into(">I", sr, 8, ntp_sec & 0xFFFFFFFF)
         struct.pack_into(">I", sr, 12, ntp_frac & 0xFFFFFFFF)
@@ -357,7 +372,6 @@ class RTCVoiceSession:
         return bytes(sr)
 
     def _drain_udp_and_check_feedback(self) -> bool:
-        """Drains inbound UDP packets so buffer stays clear and detects RTCP PLI/feedback."""
         saw_feedback = False
         if not self.udp_socket:
             return False
@@ -366,7 +380,7 @@ class RTCVoiceSession:
                 pkt = self.udp_socket.recv(4096)
                 if len(pkt) >= 8:
                     pt = pkt[1]
-                    if 205 <= pt <= 207:  # RTPFB / PSFB (PLI / FIR / NACK)
+                    if 205 <= pt <= 207:
                         saw_feedback = True
             except (BlockingIOError, OSError):
                 break
@@ -392,11 +406,9 @@ class RTCVoiceSession:
             while self.running and self.udp_socket and self.secret_key:
                 now = time.monotonic()
 
-                # Drain inbound RTCP / media; snap to immediate IDR keyframe if PLI/feedback received
                 if self._drain_udp_and_check_feedback() and H264_FRAMES:
                     frame_idx = 0
 
-                # 1. Real H.264 Video Frames @ 5 FPS (if sender)
                 if self.is_sender and H264_FRAMES:
                     raw_frame = H264_FRAMES[frame_idx % len(H264_FRAMES)]
                     frame_idx += 1
@@ -446,9 +458,12 @@ class RTCVoiceSession:
                                     self._send_udp(self._encrypt_packet(hdr, rtp_payload))
                                     video_pkts_sent += 1
                                     video_octets_sent += len(rtp_payload)
-                        video_ts = (video_ts + 18000) & 0xFFFFFFFF  # 90,000 Hz / 5 FPS = 18,000
+                        video_ts = (video_ts + 18000) & 0xFFFFFFFF
 
-                # 2. Periodic Opus Silence Frame (every 1s)
+                        if not self._logged_first_frame:
+                            self._logged_first_frame = True
+                            print(f"🎬 [{self.label}] First real H.264 frame transmitted over UDP! (size={len(frame_to_packetize)}B, DAVE_v{self.dave_protocol_version})", flush=True)
+
                 if now - last_audio_time >= 1.0:
                     last_audio_time = now
                     opus_silence = b"\xF8\xFF\xFE"
@@ -464,7 +479,6 @@ class RTCVoiceSession:
                     audio_pkts_sent += 1
                     audio_octets_sent += len(opus_silence)
 
-                # 3. Encrypted RTCP Sender Report every 1.0s (critical for PC/Mobile WebRTC sync)
                 if now - last_sr_time >= 1.0:
                     last_sr_time = now
                     if self.is_sender:
@@ -473,7 +487,6 @@ class RTCVoiceSession:
                     sr_aud = self._build_rtcp_sr(self.ssrc, audio_ts, audio_pkts_sent, audio_octets_sent)
                     self._send_udp(self._encrypt_packet(sr_aud[:8], sr_aud[8:]))
 
-                # 4. UDP Keepalive every 5s
                 if now - last_ka_time >= 5.0:
                     last_ka_time = now
                     self._send_udp(struct.pack("<Q", int(time.time() * 1000)))
@@ -497,14 +510,14 @@ class RTCVoiceSession:
         v_op = payload[2]
         body = payload[3:]
 
-        if v_op == 25:  # MLS_EXTERNAL_SENDER_PACKAGE
+        if v_op == 25:
             if not self.dave_session:
                 self.dave_session = davey.DaveSession(
                     max(1, self.dave_protocol_version), int(self.user_id), int(self.channel_id)
                 )
             self.dave_session.set_external_sender(body)
 
-        elif v_op == 27:  # MLS_PROPOSALS
+        elif v_op == 27:
             if not self.dave_session or len(body) < 1:
                 return
             op_type = body[0]
@@ -515,7 +528,7 @@ class RTCVoiceSession:
                 out = cw.commit + (cw.welcome if cw.welcome else b"")
                 await self.ws.send_binary(28, out)
 
-        elif v_op == 29:  # MLS_ANNOUNCE_COMMIT_TRANSITION
+        elif v_op == 29:
             if not self.dave_session or len(body) < 2:
                 return
             tid = struct.unpack_from(">H", body, 0)[0]
@@ -534,7 +547,7 @@ class RTCVoiceSession:
                 self.dave_session.reset()
                 await self._send_dave_key_package()
 
-        elif v_op == 30:  # MLS_WELCOME
+        elif v_op == 30:
             if not self.dave_session or len(body) < 2:
                 return
             tid = struct.unpack_from(">H", body, 0)[0]
@@ -696,7 +709,7 @@ class RTCVoiceSession:
                     if not self._media_task:
                         self._media_task = asyncio.create_task(self._udp_media_loop())
 
-                elif op == 21:  # DAVE_PREPARE_TRANSITION
+                elif op == 21:
                     tid = int(d.get("transition_id", 0))
                     pver = int(d.get("protocol_version", 0))
                     if self.dave_session:
@@ -708,12 +721,12 @@ class RTCVoiceSession:
                     else:
                         await self.ws.send_json({"op": 23, "d": {"transition_id": tid}})
 
-                elif op == 22:  # DAVE_EXECUTE_TRANSITION
+                elif op == 22:
                     tid = int(d.get("transition_id", 0))
                     if self.dave_session:
                         self.dave_session.execute_transition(tid)
 
-                elif op == 24:  # DAVE_PREPARE_EPOCH
+                elif op == 24:
                     epoch = int(d.get("epoch", 0))
                     pver = int(d.get("protocol_version", 1))
                     self.dave_protocol_version = pver
@@ -741,7 +754,7 @@ class RTCVoiceSession:
 # Managed Account & Main Gateway Logic
 # =====================================================================
 class ManagedAccount:
-    def __init__(self, acc_id: str, token: str, role: str, guild_id: str, channel_id: str, owner_id: str = "global", scope: str = "community", username="Loading...", avatar_url=None, tier_num=0, raw_hours=None, total_hours=0.0, current_tier="No Badge (0h)", next_tier="Tier 1: Newcomer (1 hour)", remaining_hours=1.0, progress_percent=0.0, analytics_token=""):
+    def __init__(self, acc_id: str, token: str, role: str, guild_id: str, channel_id: str, owner_id: str = "global", scope: str = "community", username="Loading...", avatar_url=None, tier_num=0, raw_hours=None, total_hours=0.0, current_tier="No Badge (0h)", next_tier="Tier 1: Newcomer (1 hour)", remaining_hours=1.0, progress_percent=0.0, analytics_token="", installation_id="", was_running=False):
         self.acc_id = acc_id
         self.token = token.strip()
         self.role = role
@@ -752,6 +765,8 @@ class ManagedAccount:
         self.username = username
         self.avatar_url = avatar_url or "https://cdn.discordapp.com/embed/avatars/0.png"
         self.analytics_token = analytics_token
+        self.installation_id = installation_id
+        self.was_running = was_running
 
         self.tier_num = tier_num
         self.raw_hours = raw_hours
@@ -772,7 +787,6 @@ class ManagedAccount:
         self.stream_rtc_id = str(uuid.uuid4())
         self.client_session_id = str(uuid.uuid4())
 
-        # Per-stream_key RTC metadata and active sessions (supports watching multiple streams)
         self.stream_meta: dict[str, tuple[str, str]] = {}
         self.watching_streams: set[str] = set()
         self.ws: AsyncWebSocket | None = None
@@ -783,6 +797,7 @@ class ManagedAccount:
         self.task = None
         self.telemetry_task = None
         self.cooldown_active = False
+        self._logged_badge_debug = False
 
     def mask_token(self):
         if len(self.token) > 10:
@@ -801,9 +816,55 @@ class ManagedAccount:
         mins = (elapsed % 3600) // 60
         return f"{hrs}h {mins}m"
 
+    async def ensure_telemetry_credentials(self):
+        headers = {
+            "Authorization": self.token,
+            "User-Agent": USER_AGENT,
+            "X-Super-Properties": make_super_properties(),
+            "X-Discord-Locale": "en-US"
+        }
+        if self.installation_id:
+            headers["X-Installation-ID"] = self.installation_id
+
+        async with aiohttp.ClientSession() as session:
+            if not self.installation_id:
+                for surface in (8, 2):
+                    try:
+                        async with session.get(f"https://discord.com/api/v9/apex/experiments?surface={surface}", headers=headers, timeout=8) as r_apex:
+                            if r_apex.status == 200:
+                                apex_data = await r_apex.json()
+                                inst = apex_data.get("installation")
+                                if inst:
+                                    self.installation_id = inst
+                                    headers["X-Installation-ID"] = inst
+                                    print(f"🪪 [{self.username}] Obtained X-Installation-ID (surface={surface})", flush=True)
+                                    break
+                    except Exception:
+                        pass
+
+            if not self.analytics_token or not self.user_id:
+                try:
+                    async with session.get("https://discord.com/api/v9/users/@me?with_analytics_token=true", headers=headers, timeout=8) as r_me:
+                        if r_me.status == 200:
+                            me_data = await r_me.json()
+                            if not self.user_id and me_data.get("id"):
+                                self.user_id = str(me_data["id"])
+                            tok = me_data.get("analytics_token") or ""
+                            if tok and not self.analytics_token:
+                                self.analytics_token = tok
+                                print(f"🔑 [{self.username}] Fetched analytics_token from v9", flush=True)
+                except Exception as e:
+                    print(f"⚠️ [{self.username}] v9 @me lookup error: {e}", flush=True)
+
     async def _send_telemetry(self, events):
-        if not self.analytics_token or not self.is_connected:
+        if not self.is_connected:
             return
+        if not self.analytics_token:
+            await self.ensure_telemetry_credentials()
+        if not self.analytics_token:
+            self.telemetry_status = "No Analytics Token ⚠️"
+            return
+
         payload_events = [{
             "type": evt,
             "properties": {
@@ -826,6 +887,8 @@ class ManagedAccount:
             "User-Agent": USER_AGENT,
             "X-Super-Properties": make_super_properties()
         }
+        if self.installation_id:
+            headers["X-Installation-ID"] = self.installation_id
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post("https://discord.com/api/v9/science", json=payload, headers=headers, timeout=8) as r:
@@ -833,8 +896,10 @@ class ManagedAccount:
                         self.telemetry_status = "Tracking Active 🟢"
                     else:
                         self.telemetry_status = f"Err: {r.status} 🔴"
-        except Exception:
+                        print(f"⚠️ [{self.username}] /science returned HTTP {r.status}", flush=True)
+        except Exception as e:
             self.telemetry_status = "Network Err 🟡"
+            print(f"⚠️ [{self.username}] /science network error: {e}", flush=True)
 
     async def _telemetry_loop(self):
         try:
@@ -842,8 +907,10 @@ class ManagedAccount:
                 await asyncio.sleep(1)
             if not self.running:
                 return
+            await self.ensure_telemetry_credentials()
             if self.role == "streamer":
                 await self._send_telemetry(["media_session_joined", "video_stream_started"])
+                print(f"📡 [Science] Telemetry status for {self.username}: {self.telemetry_status}", flush=True)
             while self.running:
                 await asyncio.sleep(60)
                 if self.role == "streamer" and self.is_connected and not self.cooldown_active:
@@ -854,6 +921,7 @@ class ManagedAccount:
     async def start(self):
         if self.running: return
         self.running = True
+        self.was_running = True
         self.status = "Connecting... ⏳"
         self.telemetry_status = "Initializing..."
         self.voice_rtc_id = str(uuid.uuid4())
@@ -871,6 +939,7 @@ class ManagedAccount:
 
     async def stop(self):
         self.running = False
+        self.was_running = False
         if self.role == "streamer":
             await self._send_telemetry(["video_stream_ended"])
         if self.task: self.task.cancel()
@@ -909,14 +978,14 @@ class ManagedAccount:
                         if op == 10:
                             interval = d.get("heartbeat_interval", 41250) / 1000.0
                             hb_t = asyncio.create_task(self._hb(interval))
-                            await self.ws.send_json({
-                                "op": 2,
-                                "d": {
-                                    "token": self.token, "capabilities": 16381,
-                                    "properties": json.loads(base64.b64decode(make_super_properties())),
-                                    "presence": {"status": "online", "since": 0, "activities": [], "afk": False}
-                                }
-                            })
+                            ident_d = {
+                                "token": self.token, "capabilities": 16381,
+                                "properties": json.loads(base64.b64decode(make_super_properties())),
+                                "presence": {"status": "online", "since": 0, "activities": [], "afk": False}
+                            }
+                            if self.installation_id:
+                                ident_d["installation_id"] = self.installation_id
+                            await self.ws.send_json({"op": 2, "d": ident_d})
                         elif op == 1:
                             await self.ws.send_json({"op": 1, "d": None})
                         elif op == 0:
@@ -950,9 +1019,14 @@ class ManagedAccount:
             av = user.get("avatar")
             self.avatar_url = f"https://cdn.discordapp.com/avatars/{self.user_id}/{av}.png?size=128" if av else f"https://cdn.discordapp.com/embed/avatars/{int(self.user_id or 0) % 5}.png"
             self.voice_session_id = d.get("session_id")
+            apex = d.get("apex_experiments") or {}
+            if apex.get("installation"):
+                self.installation_id = apex["installation"]
             self.is_connected = True
             self.connected_since = time.time()
-            print(f"✅ [{self.username}] Gateway READY", flush=True)
+            print(f"✅ [{self.username}] Gateway READY (uid={self.user_id})", flush=True)
+
+            asyncio.create_task(manager.update_account_badge_from_discord(self))
 
             await self.ws.send_json({"op": 4, "d": {"guild_id": self.guild_id, "channel_id": self.channel_id, "self_mute": True, "self_deaf": True, "self_video": False}})
 
@@ -974,7 +1048,6 @@ class ManagedAccount:
             if uid == str(self.user_id):
                 self.voice_session_id = d.get("session_id") or self.voice_session_id
             elif self.role == "watcher" and self.is_connected and self.scope == "community":
-                # Community Watcher auto-watches anyone opening screenshare in the room
                 s_key = f"guild:{self.guild_id}:{self.channel_id}:{uid}"
                 if ch_id == self.channel_id and is_streaming:
                     if s_key not in self.watching_streams:
@@ -1003,7 +1076,6 @@ class ManagedAccount:
         elif t == "STREAM_CREATE":
             s_key = d.get("stream_key")
             if s_key:
-                # Capture the CRITICAL rtc_server_id and rtc_channel_id for Stream RTC Identify!
                 rtc_srv = str(d.get("rtc_server_id") or self.guild_id or self.channel_id)
                 rtc_ch = str(d.get("rtc_channel_id") or self.channel_id)
                 self.stream_meta[s_key] = (rtc_srv, rtc_ch)
@@ -1086,83 +1158,243 @@ class CloudSystemManager:
                         if g.get("id"):
                             self.guild_id = g["id"]
                             self.guild_name = g.get("name", "Official Community")
+                            print(f"🎯 Guild: {self.guild_name} ({self.guild_id})", flush=True)
                             return
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"ℹ️ Invite lookup fallback ({e})", flush=True)
         self.guild_id = DEFAULT_GUILD_ID
+        print(f"🎯 Using Fixed Guild ID: {self.guild_id}", flush=True)
+
+    @staticmethod
+    def _extract_badge_objects(payload, parent_key: str = "") -> list[dict]:
+        found = []
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    item_copy = dict(item)
+                    if parent_key and "_parent_key" not in item_copy:
+                        item_copy["_parent_key"] = parent_key
+                    found.append(item_copy)
+                elif isinstance(item, list):
+                    found.extend(CloudSystemManager._extract_badge_objects(item, parent_key))
+        elif isinstance(payload, dict):
+            # If this dict itself looks like a badge/progress entry, include it
+            if any(k in payload for k in ("id", "badge_id", "tier", "level", "description", "progress", "current_value", "hours")):
+                item_copy = dict(payload)
+                if parent_key and "_parent_key" not in item_copy:
+                    item_copy["_parent_key"] = parent_key
+                found.append(item_copy)
+            # Recurse into child dicts/lists to catch dict-keyed badge catalogs
+            for k, v in payload.items():
+                if isinstance(v, (dict, list)):
+                    found.extend(CloudSystemManager._extract_badge_objects(v, str(k)))
+        return found
+
+    @staticmethod
+    def _parse_streaming_badge(badge_objs: list[dict]) -> tuple[int, float | None]:
+        matched_tier = 0
+        raw_hrs = None
+        valid_hour_targets = {1, 5, 20, 75, 150, 300, 500, 1000, 2000, 5000}
+
+        for b in badge_objs:
+            b_id = str(b.get("id") or b.get("badge_id") or b.get("key") or b.get("_parent_key") or "").lower()
+            desc = str(b.get("description") or b.get("name") or b.get("title") or "")
+            desc_l = desc.lower()
+
+            is_streaming = (
+                "stream" in b_id
+                or "stream" in desc_l
+                or "broadcast" in desc_l
+                or "بث" in desc_l
+                or any(name in b_id or name in desc_l for name in TIER_NAME_TO_NUM if name != "star")
+                or ("star" in b_id and "hour" in desc_l)
+            )
+            if not is_streaming:
+                continue
+
+            for tk in ("tier", "level", "stage", "current_tier"):
+                tv = b.get(tk)
+                if isinstance(tv, (int, float)) and tv > 0:
+                    matched_tier = max(matched_tier, int(tv))
+
+            id_m = re.search(r"(?:tier|level|stage|streaming)_?(\d+)", b_id, re.I)
+            if id_m:
+                matched_tier = max(matched_tier, int(id_m.group(1)))
+
+            desc_m = re.search(r"(?:tier|level|stage|المستوى)\s*(\d+)", desc_l, re.I)
+            if desc_m:
+                matched_tier = max(matched_tier, int(desc_m.group(1)))
+
+            for name, t_num in TIER_NAME_TO_NUM.items():
+                if name == "star" and "superstar" in (b_id + " " + desc_l):
+                    continue
+                if re.search(rf"\b{name}\b", b_id.replace("_", " ") + " " + desc_l):
+                    matched_tier = max(matched_tier, t_num)
+
+            # Extract explicit hours/seconds/minutes if Discord provides exact progress
+            for hk in ("hours", "current_hours", "total_hours"):
+                hv = b.get(hk)
+                if isinstance(hv, (int, float)):
+                    raw_hrs = float(hv)
+            if raw_hrs is None:
+                for sk in ("seconds", "total_seconds", "duration_seconds"):
+                    sv = b.get(sk)
+                    if isinstance(sv, (int, float)) and sv > 0:
+                        raw_hrs = float(sv) / 3600.0
+            if raw_hrs is None:
+                for mk in ("minutes", "total_minutes"):
+                    mv = b.get(mk)
+                    if isinstance(mv, (int, float)) and mv > 0:
+                        raw_hrs = float(mv) / 60.0
+            if raw_hrs is None:
+                prog = b.get("progress")
+                if isinstance(prog, dict):
+                    cur_v = None
+                    tgt_v = None
+                    for pk in ("current", "value", "current_value", "hours"):
+                        if isinstance(prog.get(pk), (int, float)):
+                            cur_v = float(prog[pk])
+                            break
+                    for gk in ("target", "goal", "max", "next_milestone"):
+                        if isinstance(prog.get(gk), (int, float)):
+                            tgt_v = float(prog[gk])
+                            break
+                    if cur_v is not None:
+                        if tgt_v and int(tgt_v) in valid_hour_targets:
+                            raw_hrs = cur_v
+                        elif tgt_v and int(tgt_v / 3600) in valid_hour_targets:
+                            raw_hrs = cur_v / 3600.0
+                        elif tgt_v and int(tgt_v / 60) in valid_hour_targets:
+                            raw_hrs = cur_v / 60.0
+                elif isinstance(prog, (int, float)):
+                    unit = str(b.get("unit") or "").lower()
+                    tgt = b.get("target") or b.get("goal")
+                    if "sec" in unit or (isinstance(tgt, (int, float)) and int(tgt / 3600) in valid_hour_targets):
+                        raw_hrs = float(prog) / 3600.0
+                    elif "min" in unit or (isinstance(tgt, (int, float)) and int(tgt / 60) in valid_hour_targets):
+                        raw_hrs = float(prog) / 60.0
+                    elif "hour" in unit or "hr" in unit or (isinstance(tgt, (int, float)) and int(tgt) in valid_hour_targets):
+                        raw_hrs = float(prog)
+
+            if raw_hrs is None:
+                hrs_m = re.search(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|ساعة|ساعات)", desc_l)
+                if hrs_m:
+                    try:
+                        raw_hrs = float(hrs_m.group(1))
+                    except Exception:
+                        pass
+
+            if matched_tier == 0 and raw_hrs is not None:
+                for t_num in sorted(STREAM_BADGE_MILESTONES.keys(), reverse=True):
+                    if raw_hrs >= STREAM_BADGE_MILESTONES[t_num][0]:
+                        matched_tier = t_num
+                        break
+
+        return min(matched_tier, 10), raw_hrs
 
     async def update_account_badge_from_discord(self, acc: ManagedAccount):
-        if not acc.user_id or not acc.token: return
-        url = f"https://discord.com/api/v9/users/{acc.user_id}/profile?with_mutual_guilds=false"
-        headers = {"Authorization": acc.token, "User-Agent": USER_AGENT}
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=8) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        badges = data.get("badges", [])
-                        matched_tier = 0
-                        raw_hrs = None
+        if not acc.token:
+            return
+        await acc.ensure_telemetry_credentials()
 
-                        for b in badges:
-                            b_id = str(b.get("id", "")).lower()
-                            desc = str(b.get("description", ""))
-                            if "streaming" in b_id or "stream" in b_id:
-                                match = re.search(r"streaming(?:_tier)?_(\d+)", b_id, re.I)
-                                if match: matched_tier = int(match.group(1))
-                                hrs_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)", desc, re.I)
-                                if hrs_match:
-                                    try: raw_hrs = float(hrs_match.group(1))
-                                    except Exception: pass
-                                break
+        headers = {
+            "Authorization": acc.token,
+            "User-Agent": USER_AGENT,
+            "X-Super-Properties": make_super_properties(),
+            "X-Discord-Locale": "en-US"
+        }
+        if acc.installation_id:
+            headers["X-Installation-ID"] = acc.installation_id
 
-                        acc.tier_num = matched_tier
-                        acc.raw_hours = raw_hrs
+        all_badge_objs: list[dict] = []
+        badges_status = None
+        profile_status = None
+        raw_badges_preview = ""
 
-                        if matched_tier == 0:
-                            acc.current_tier = "No Badge (0h)"
-                            acc.total_hours = raw_hrs if raw_hrs is not None else 0.0
-                            acc.next_tier = "Tier 1: Newcomer (1 hour)"
-                            acc.remaining_hours = max(0.0, 1.0 - acc.total_hours)
-                            acc.progress_percent = min(100.0, (acc.total_hours / 1.0) * 100.0)
-                        elif matched_tier in STREAM_BADGE_MILESTONES:
-                            curr_base_hrs, curr_name = STREAM_BADGE_MILESTONES[matched_tier]
-                            acc.current_tier = curr_name
-                            acc.total_hours = raw_hrs if raw_hrs is not None else float(curr_base_hrs)
-                            if matched_tier < 10:
-                                next_base_hrs, next_name = STREAM_BADGE_MILESTONES[matched_tier + 1]
-                                acc.next_tier = next_name
-                                acc.remaining_hours = max(0.0, float(next_base_hrs) - acc.total_hours)
-                                span = float(next_base_hrs - curr_base_hrs)
-                                offset = acc.total_hours - float(curr_base_hrs)
-                                acc.progress_percent = min(100.0, max(0.0, (offset / span) * 100.0)) if span > 0 else 100.0
-                            else:
-                                acc.next_tier = "Max Level Reached! 👑"
-                                acc.remaining_hours = 0.0
-                                acc.progress_percent = 100.0
-        except Exception:
-            pass
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get("https://discord.com/api/v9/users/%40me/badges", headers=headers, timeout=8) as r_b:
+                    badges_status = r_b.status
+                    if r_b.status == 200:
+                        b_data = await r_b.json()
+                        raw_badges_preview = json.dumps(b_data, ensure_ascii=False)[:400]
+                        all_badge_objs.extend(self._extract_badge_objects(b_data))
+            except Exception as e:
+                badges_status = f"err:{e}"
+
+            if acc.user_id:
+                try:
+                    p_url = f"https://discord.com/api/v9/users/{acc.user_id}/profile?with_mutual_guilds=false"
+                    async with session.get(p_url, headers=headers, timeout=8) as r_p:
+                        profile_status = r_p.status
+                        if r_p.status == 200:
+                            p_data = await r_p.json()
+                            all_badge_objs.extend(self._extract_badge_objects(p_data.get("badges", [])))
+                            if isinstance(p_data.get("user_profile"), dict):
+                                all_badge_objs.extend(self._extract_badge_objects(p_data["user_profile"].get("badges", [])))
+                except Exception as e:
+                    profile_status = f"err:{e}"
+
+        if acc.user_id and not acc._logged_badge_debug:
+            acc._logged_badge_debug = True
+            summary = [
+                {k: b.get(k) for k in ("_parent_key", "id", "badge_id", "description", "name", "tier", "progress", "hours") if b.get(k) is not None}
+                for b in all_badge_objs
+            ]
+            print(f"🔍 [Badge Inspect] @{acc.username} | /%40me/badges={badges_status} {raw_badges_preview} | /profile={profile_status} | parsed={json.dumps(summary, ensure_ascii=False)[:700]}", flush=True)
+
+        matched_tier, raw_hrs = self._parse_streaming_badge(all_badge_objs)
+        acc.tier_num = matched_tier
+        acc.raw_hours = raw_hrs
+
+        if matched_tier == 0:
+            acc.current_tier = "No Badge (0h)"
+            acc.total_hours = raw_hrs if raw_hrs is not None else 0.0
+            acc.next_tier = "Tier 1: Newcomer (1 hour)"
+            acc.remaining_hours = max(0.0, 1.0 - acc.total_hours)
+            acc.progress_percent = min(100.0, (acc.total_hours / 1.0) * 100.0)
+        elif matched_tier in STREAM_BADGE_MILESTONES:
+            curr_base_hrs, curr_name = STREAM_BADGE_MILESTONES[matched_tier]
+            acc.current_tier = curr_name
+            acc.total_hours = raw_hrs if raw_hrs is not None else float(curr_base_hrs)
+            if matched_tier < 10:
+                next_base_hrs, next_name = STREAM_BADGE_MILESTONES[matched_tier + 1]
+                acc.next_tier = next_name
+                acc.remaining_hours = max(0.0, float(next_base_hrs) - acc.total_hours)
+                span = float(next_base_hrs - curr_base_hrs)
+                offset = acc.total_hours - float(curr_base_hrs)
+                acc.progress_percent = min(100.0, max(0.0, (offset / span) * 100.0)) if span > 0 else 100.0
+            else:
+                acc.next_tier = "Max Level Reached! 👑"
+                acc.remaining_hours = 0.0
+                acc.progress_percent = 100.0
+
+        await self.save_account_to_db(acc)
 
     async def _badge_refresh_loop(self):
         try:
             while True:
                 await asyncio.sleep(300)
                 for acc in list(self.accounts.values()):
-                    if acc.user_id and acc.token:
+                    if acc.token:
                         await self.update_account_badge_from_discord(acc)
-                        await self.save_account_to_db(acc)
         except asyncio.CancelledError:
             pass
 
     async def verify_token_and_membership(self, token: str):
-        headers = {"Authorization": token, "User-Agent": USER_AGENT}
+        headers = {
+            "Authorization": token,
+            "User-Agent": USER_AGENT,
+            "X-Super-Properties": make_super_properties(),
+            "X-Discord-Locale": "en-US"
+        }
         async with aiohttp.ClientSession() as session:
-            async with session.get("https://discord.com/api/v10/users/@me?with_analytics_token=true", headers=headers, timeout=8) as r1:
+            async with session.get("https://discord.com/api/v9/users/@me?with_analytics_token=true", headers=headers, timeout=8) as r1:
                 if r1.status == 401: return False, "Invalid Discord Token.", None, False
                 if r1.status != 200: return False, f"API Error ({r1.status})", None, False
                 user_info = await r1.json()
 
-            async with session.get("https://discord.com/api/v10/users/@me/guilds", headers=headers, timeout=8) as r2:
+            async with session.get("https://discord.com/api/v9/users/@me/guilds", headers=headers, timeout=8) as r2:
                 if r2.status == 200:
                     user_guilds = await r2.json()
                     if str(self.guild_id) not in [str(g.get("id")) for g in user_guilds if "id" in g]:
@@ -1172,36 +1404,64 @@ class CloudSystemManager:
         return True, "Valid", user_info, False
 
     async def init_mongo(self):
-        if not MONGO_URI: return
+        if not MONGO_URI:
+            print("ℹ️ MONGO_URI not set — running in-memory mode.", flush=True)
+            return
         try:
             self.mongo_client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            await self.mongo_client.admin.command("ping")
             self.db = self.mongo_client["streamer_badge_db"]
             async for doc in self.db.accounts.find({}):
                 acc_id = doc["acc_id"]
-                self.accounts[acc_id] = ManagedAccount(
+                acc = ManagedAccount(
                     acc_id=acc_id, token=doc["token"], role=doc["role"],
                     guild_id=self.guild_id, channel_id=DEFAULT_CHANNEL_ID,
                     owner_id=doc.get("owner_id", "global"), scope=doc.get("scope", "private"),
                     username=doc.get("username", "Saved Account"), avatar_url=doc.get("avatar_url"),
-                    analytics_token=doc.get("analytics_token", ""), tier_num=doc.get("tier_num", 0),
-                    total_hours=doc.get("total_hours", 0.0), current_tier=doc.get("current_tier", "No Badge (0h)"),
-                    next_tier=doc.get("next_tier", "Tier 1: Newcomer (1 hour)"), remaining_hours=doc.get("remaining_hours", 1.0),
-                    progress_percent=doc.get("progress_percent", 0.0)
+                    analytics_token=doc.get("analytics_token", ""),
+                    installation_id=doc.get("installation_id", ""),
+                    tier_num=doc.get("tier_num", 0),
+                    raw_hours=doc.get("raw_hours"),
+                    total_hours=doc.get("total_hours", 0.0),
+                    current_tier=doc.get("current_tier", "No Badge (0h)"),
+                    next_tier=doc.get("next_tier", "Tier 1: Newcomer (1 hour)"),
+                    remaining_hours=doc.get("remaining_hours", 1.0),
+                    progress_percent=doc.get("progress_percent", 0.0),
+                    was_running=doc.get("was_running", False)
                 )
-        except Exception:
+                acc.user_id = doc.get("user_id")
+                self.accounts[acc_id] = acc
+            print(f"✅ MongoDB connected! Restored {len(self.accounts)} account(s).", flush=True)
+        except Exception as e:
+            print(f"❌ MongoDB Connection Failed: {e}", flush=True)
             self.db = None
+
+    async def auto_resume_accounts(self):
+        for acc in list(self.accounts.values()):
+            asyncio.create_task(self.update_account_badge_from_discord(acc))
+
+        to_resume = [a for a in self.accounts.values() if a.was_running]
+        if not to_resume:
+            return
+        self.is_running = True
+        print(f"🔄 Auto-resuming {len(to_resume)} previously running account(s)...", flush=True)
+        for acc in to_resume:
+            await acc.start()
+            await asyncio.sleep(4)
+        asyncio.create_task(self.balance_and_pair_streams())
 
     async def save_account_to_db(self, acc: ManagedAccount):
         if self.db is not None:
             try:
                 await self.db.accounts.update_one({"acc_id": acc.acc_id}, {"$set": {
-                    "acc_id": acc.acc_id, "token": acc.token, "role": acc.role,
+                    "acc_id": acc.acc_id, "user_id": acc.user_id, "token": acc.token, "role": acc.role,
                     "guild_id": acc.guild_id, "channel_id": acc.channel_id, "owner_id": acc.owner_id,
                     "scope": acc.scope, "username": acc.username, "avatar_url": acc.avatar_url,
-                    "analytics_token": acc.analytics_token, "tier_num": acc.tier_num,
+                    "analytics_token": acc.analytics_token, "installation_id": acc.installation_id,
+                    "tier_num": acc.tier_num, "raw_hours": acc.raw_hours,
                     "total_hours": acc.total_hours, "current_tier": acc.current_tier,
                     "next_tier": acc.next_tier, "remaining_hours": acc.remaining_hours,
-                    "progress_percent": acc.progress_percent
+                    "progress_percent": acc.progress_percent, "was_running": acc.was_running
                 }}, upsert=True)
             except Exception:
                 pass
@@ -1238,6 +1498,7 @@ class CloudSystemManager:
         for acc in self.accounts.values():
             if not acc.running:
                 await acc.start()
+                await self.save_account_to_db(acc)
                 await asyncio.sleep(4)
 
     async def stop_all(self):
@@ -1361,9 +1622,9 @@ async def handle_add(request):
     acc.user_id = u_id
     manager.accounts[acc.acc_id] = acc
     await manager.update_account_badge_from_discord(acc)
-    await manager.save_account_to_db(acc)
     manager.ensure_background_tasks()
     await acc.start()
+    await manager.save_account_to_db(acc)
     asyncio.create_task(manager.balance_and_pair_streams())
     return web.json_response({"success": True, "username": acc.username})
 
@@ -1376,10 +1637,12 @@ async def handle_toggle(request):
     if not is_admin and acc.owner_id != sess_id: return web.json_response({"success": False, "error": "Unauthorized!"})
     if acc.running:
         await acc.stop()
+        await manager.save_account_to_db(acc)
         return web.json_response({"success": True, "running": False})
     else:
         manager.ensure_background_tasks()
         await acc.start()
+        await manager.save_account_to_db(acc)
         asyncio.create_task(manager.balance_and_pair_streams())
         return web.json_response({"success": True, "running": True})
 
@@ -1417,6 +1680,7 @@ async def main():
     await manager.resolve_guild()
     await manager.init_mongo()
     manager.ensure_background_tasks()
+    asyncio.create_task(manager.auto_resume_accounts())
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
