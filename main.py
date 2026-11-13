@@ -5,16 +5,19 @@ import base64
 import json
 import os
 import re
+import socket
 import ssl
 import struct
+import subprocess
 import time
 import urllib.request
 import uuid
-import socket
 import aiohttp
 from aiohttp import web
-from motor.motor_asyncio import AsyncIOMotorClient
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import davey
+import nacl.secret
+from motor.motor_asyncio import AsyncIOMotorClient
 
 PORT = int(os.environ.get("PORT", 3000))
 MONGO_URI = os.environ.get("MONGO_URI", "")
@@ -24,6 +27,7 @@ ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "18102010")
 SERVER_INVITE_CODE = "rAx625W8Gn"
 DEFAULT_GUILD_ID = os.environ.get("GUILD_ID", "1059780215720648725")
 DEFAULT_CHANNEL_ID = "1569527599426707546"
+H264_LOOP_PATH = "/app/stream_loop.h264"
 
 GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
 USER_AGENT = (
@@ -55,6 +59,78 @@ def make_super_properties() -> str:
     }
     return base64.b64encode(json.dumps(props, separators=(",", ":")).encode()).decode()
 
+# =====================================================================
+# H.264 Annex-B Frame Parser & Pre-Baked Loader
+# =====================================================================
+def split_annexb_nals(data: bytes) -> list[bytes]:
+    nals = []
+    i = 0
+    n = len(data)
+    start = -1
+    while i < n:
+        if i + 3 < n and data[i] == 0 and data[i + 1] == 0 and data[i + 2] == 0 and data[i + 3] == 1:
+            if start != -1 and i > start:
+                nals.append(data[start:i])
+            start = i + 4
+            i += 4
+        elif i + 2 < n and data[i] == 0 and data[i + 1] == 0 and data[i + 2] == 1:
+            if start != -1 and i > start:
+                nals.append(data[start:i])
+            start = i + 3
+            i += 3
+        else:
+            i += 1
+    if start != -1 and n > start:
+        nals.append(data[start:n])
+    return nals
+
+def group_nals_into_frames(nals: list[bytes]) -> list[bytes]:
+    frames = []
+    current = bytearray()
+    for nal in nals:
+        if not nal:
+            continue
+        nal_type = nal[0] & 0x1F
+        current.extend(b"\x00\x00\x00\x01")
+        current.extend(nal)
+        if nal_type in (1, 5):  # End of Access Unit (slices=1)
+            frames.append(bytes(current))
+            current.clear()
+    if current:
+        frames.append(bytes(current))
+    return frames
+
+def load_video_frames() -> list[bytes]:
+    path = H264_LOOP_PATH if os.path.exists(H264_LOOP_PATH) else "stream_loop.h264"
+    if not os.path.exists(path):
+        try:
+            print("🎞️ Generating pre-baked 5 FPS H.264 loop via FFmpeg...", flush=True)
+            subprocess.run([
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=5", "-t", "6",
+                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+                "-profile:v", "baseline", "-level", "3.1", "-pix_fmt", "yuv420p",
+                "-b:v", "30k", "-maxrate", "40k", "-bufsize", "40k",
+                "-g", "5", "-keyint_min", "5", "-sc_threshold", "0", "-bf", "0",
+                "-x264-params", "slices=1:repeat-headers=1", "-f", "h264", path
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print(f"⚠️ Could not generate H.264 file: {e}", flush=True)
+            return []
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        frames = group_nals_into_frames(split_annexb_nals(raw))
+        print(f"✅ Loaded {len(frames)} real FFmpeg H.264 frames ({len(raw)} bytes total)", flush=True)
+        return frames
+    except Exception as e:
+        print(f"⚠️ Failed loading H.264 frames: {e}", flush=True)
+        return []
+
+H264_FRAMES: list[bytes] = []
+
+# =====================================================================
+# Async WebSocket (Text JSON + Binary DAVE + Explicit Close Code Errors)
+# =====================================================================
 class AsyncWebSocket:
     def __init__(self, url: str) -> None:
         self.url = url
@@ -87,7 +163,7 @@ class AsyncWebSocket:
         await self.writer.drain()
         line = await self.reader.readline()
         if not line.startswith(b"HTTP/1.1 101"):
-            raise ConnectionError("Handshake failed")
+            raise ConnectionError(f"Handshake failed: {line.decode('utf-8', errors='ignore').strip()}")
         while True:
             hl = await self.reader.readline()
             if hl in (b"\r\n", b"\n", b""):
@@ -96,6 +172,9 @@ class AsyncWebSocket:
     async def send_json(self, payload: dict) -> None:
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         await self._send_frame(0x1, data)
+
+    async def send_binary(self, opcode: int, data: bytes) -> None:
+        await self._send_frame(0x2, bytes([opcode]) + data)
 
     async def _send_frame(self, opcode: int, payload: bytes) -> None:
         if self.closed or not self.writer:
@@ -117,16 +196,13 @@ class AsyncWebSocket:
             self.writer.write(header + masked)
             await self.writer.drain()
 
-    async def recv_json(self) -> dict | None:
+    async def recv_msg(self) -> tuple[int, object] | None:
         if not self.reader or self.closed:
             return None
         fragments = bytearray()
         message_opcode = None
         while True:
-            try:
-                first_two = await self.reader.readexactly(2)
-            except Exception:
-                return None
+            first_two = await self.reader.readexactly(2)
             b1, b2 = first_two[0], first_two[1]
             fin = bool(b1 & 0x80)
             opcode = b1 & 0x0F
@@ -142,10 +218,14 @@ class AsyncWebSocket:
                 payload = bytes(b ^ mask_key[i & 3] for i, b in enumerate(payload))
 
             if opcode == 0x8:
+                code = struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1000
+                reason = payload[2:].decode("utf-8", errors="ignore") if len(payload) > 2 else ""
                 self.closed = True
-                return None
+                raise ConnectionResetError(f"WS Closed ({code}): {reason}")
             elif opcode == 0x9:
                 await self._send_frame(0xA, payload)
+                continue
+            elif opcode == 0xA:
                 continue
             elif opcode in (0x1, 0x2):
                 message_opcode = opcode
@@ -155,10 +235,9 @@ class AsyncWebSocket:
 
             if fin:
                 if message_opcode == 0x1:
-                    try:
-                        return json.loads(fragments.decode("utf-8", errors="replace"))
-                    except:
-                        return None
+                    return 0x1, json.loads(fragments.decode("utf-8", errors="replace"))
+                elif message_opcode == 0x2:
+                    return 0x2, bytes(fragments)
                 fragments.clear()
                 message_opcode = None
 
@@ -171,11 +250,15 @@ class AsyncWebSocket:
                 await self._send_frame(0x8, struct.pack("!H", 1000))
                 self.writer.close()
                 await self.writer.wait_closed()
-            except:
+            except Exception:
                 pass
 
+# =====================================================================
+# Real Voice / Stream RTC Session (DAVE v1 + H264 RTP + RTCP SR + PLI)
+# =====================================================================
 class RTCVoiceSession:
-    def __init__(self, endpoint: str, server_id: str, channel_id: str, user_id: str, session_id: str, voice_token: str, rtc_connection_id: str, is_stream: bool = False):
+    def __init__(self, label: str, endpoint: str, server_id: str, channel_id: str, user_id: str, session_id: str, voice_token: str, rtc_connection_id: str, is_stream: bool = False, is_sender: bool = False):
+        self.label = label
         self.endpoint = endpoint
         self.server_id = server_id
         self.channel_id = channel_id
@@ -184,11 +267,27 @@ class RTCVoiceSession:
         self.voice_token = voice_token
         self.rtc_connection_id = rtc_connection_id
         self.is_stream = is_stream
-        self.ws = None
-        self.udp_socket = None
-        self.secret_key = None
-        self.aesgcm = None
-        self.video_ssrc = 0
+        self.is_sender = is_sender
+
+        self.ws: AsyncWebSocket | None = None
+        self.udp_socket: socket.socket | None = None
+        self.udp_ip: str = ""
+        self.udp_port: int = 0
+
+        self.ssrc: int = 1
+        self.video_ssrc: int = 2
+        self.rtx_ssrc: int = 3
+        self.seq_ack: int = -1
+
+        self.secret_key: bytes | None = None
+        self.encryption_mode: str = ""
+        self.aesgcm: AESGCM | None = None
+        self.nacl_box: nacl.secret.Aead | None = None
+        self.nonce_counter: int = 0
+
+        self.dave_protocol_version: int = 0
+        self.dave_session: davey.DaveSession | None = None
+
         self._task = None
         self._hb_task = None
         self._media_task = None
@@ -204,57 +303,255 @@ class RTCVoiceSession:
         if self._media_task: self._media_task.cancel()
         if self.udp_socket:
             try: self.udp_socket.close()
-            except: pass
+            except Exception: pass
         if self.ws: await self.ws.close()
         if self._task: self._task.cancel()
 
-    async def _udp_media_loop(self, ip: str, port: int):
-        seq = 0
-        nonce_seq = 0
-        # Valid H.264 Annex-B Minimal Black Frame (SPS + PPS + IDR slice)
-        h264_black_frame = (
-            b"\x00\x00\x00\x01\x67\x42\x00\x1f\x96\x54\x05\x01\xe9\x80"
-            b"\x00\x00\x00\x01\x68\xce\x38\x80"
-            b"\x00\x00\x00\x01\x65\x88\x84\x00\x10\x00\x00\x03\x00\x00\x03\x00\x78"
-        )
+    def _encrypt_packet(self, header: bytes, payload: bytes) -> bytes:
+        self.nonce_counter = (self.nonce_counter + 1) & 0xFFFFFFFF
+        nonce_4 = struct.pack(">I", self.nonce_counter)
+
+        if self.encryption_mode == "aead_aes256_gcm_rtpsize" and self.aesgcm:
+            nonce_12 = nonce_4 + (b"\x00" * 8)
+            ct = self.aesgcm.encrypt(nonce_12, payload, header)
+            return header + ct + nonce_4
+
+        elif self.encryption_mode == "aead_xchacha20_poly1305_rtpsize" and self.nacl_box:
+            nonce_24 = nonce_4 + (b"\x00" * 20)
+            ct = self.nacl_box.encrypt(payload, aad=header, nonce=nonce_24).ciphertext
+            return header + ct + nonce_4
+
+        raise RuntimeError(f"Unsupported encryption mode: {self.encryption_mode}")
+
+    def _send_udp(self, pkt: bytes):
+        if not self.udp_socket or not self.udp_ip:
+            return
         try:
-            while self.running and self.udp_socket and self.aesgcm:
-                timestamp = int(time.time() * 90000) & 0xFFFFFFFF
-                
-                # 1. Real Encrypted Video RTP Packet (Payload Type 101)
-                rtp_header = bytearray(12)
-                rtp_header[0] = 0x80
-                rtp_header[1] = 101 # PT 101 = H264
-                struct.pack_into(">H", rtp_header, 2, seq % 65535)
-                struct.pack_into(">I", rtp_header, 4, timestamp)
-                struct.pack_into(">I", rtp_header, 8, self.video_ssrc)
-                
-                nonce_seq = (nonce_seq + 1) % 0xFFFFFFFF
-                nonce = struct.pack(">I", nonce_seq) + (b"\x00" * 8)
-                
-                # AES-256-GCM encryption with RTP Header as AAD
-                ciphertext = self.aesgcm.encrypt(nonce, h264_black_frame, bytes(rtp_header))
-                final_pkt = bytes(rtp_header) + ciphertext + struct.pack(">I", nonce_seq)
-                
-                try:
-                    self.udp_socket.sendto(final_pkt, (ip, port))
-                except BlockingIOError:
-                    pass
-                
-                # 2. Discord Keepalive Ping
-                if seq % 5 == 0:
-                    ka_pkt = struct.pack('<Q', int(time.time() * 1000))
-                    try:
-                        self.udp_socket.sendto(ka_pkt, (ip, port))
-                    except BlockingIOError:
-                        pass
-                
-                seq += 1
-                await asyncio.sleep(1.0)
+            self.udp_socket.sendto(pkt, (self.udp_ip, self.udp_port))
+        except (BlockingIOError, OSError):
+            pass
+
+    def _build_rtp_header(self, payload_type: int, seq: int, timestamp: int, ssrc: int, marker: bool = False) -> bytes:
+        hdr = bytearray(12)
+        hdr[0] = 0x80
+        hdr[1] = (0x80 | payload_type) if marker else (payload_type & 0x7F)
+        struct.pack_into(">H", hdr, 2, seq & 0xFFFF)
+        struct.pack_into(">I", hdr, 4, timestamp & 0xFFFFFFFF)
+        struct.pack_into(">I", hdr, 8, ssrc & 0xFFFFFFFF)
+        return bytes(hdr)
+
+    def _build_rtcp_sr(self, ssrc: int, rtp_ts: int, pkt_count: int, octet_count: int) -> bytes:
+        now = time.time()
+        ntp_sec = int(now) + 2208988800
+        ntp_frac = int((now - int(now)) * (1 << 32))
+        sr = bytearray(28)
+        sr[0] = 0x80  # V=2, P=0, RC=0
+        sr[1] = 200   # PT=200 (RTCP Sender Report)
+        struct.pack_into(">H", sr, 2, 6)  # (28/4) - 1 = 6
+        struct.pack_into(">I", sr, 4, ssrc & 0xFFFFFFFF)
+        struct.pack_into(">I", sr, 8, ntp_sec & 0xFFFFFFFF)
+        struct.pack_into(">I", sr, 12, ntp_frac & 0xFFFFFFFF)
+        struct.pack_into(">I", sr, 16, rtp_ts & 0xFFFFFFFF)
+        struct.pack_into(">I", sr, 20, pkt_count & 0xFFFFFFFF)
+        struct.pack_into(">I", sr, 24, octet_count & 0xFFFFFFFF)
+        return bytes(sr)
+
+    def _drain_udp_and_check_feedback(self) -> bool:
+        """Drains inbound UDP packets so buffer stays clear and detects RTCP PLI/feedback."""
+        saw_feedback = False
+        if not self.udp_socket:
+            return False
+        for _ in range(32):
+            try:
+                pkt = self.udp_socket.recv(4096)
+                if len(pkt) >= 8:
+                    pt = pkt[1]
+                    if 205 <= pt <= 207:  # RTPFB / PSFB (PLI / FIR / NACK)
+                        saw_feedback = True
+            except (BlockingIOError, OSError):
+                break
+        return saw_feedback
+
+    async def _udp_media_loop(self):
+        video_seq = 0
+        video_ts = 0
+        video_pkts_sent = 0
+        video_octets_sent = 0
+
+        audio_seq = 0
+        audio_ts = 0
+        audio_pkts_sent = 0
+        audio_octets_sent = 0
+
+        frame_idx = 0
+        last_sr_time = 0.0
+        last_audio_time = 0.0
+        last_ka_time = 0.0
+
+        try:
+            while self.running and self.udp_socket and self.secret_key:
+                now = time.monotonic()
+
+                # Drain inbound RTCP / media; snap to immediate IDR keyframe if PLI/feedback received
+                if self._drain_udp_and_check_feedback() and H264_FRAMES:
+                    frame_idx = 0
+
+                # 1. Real H.264 Video Frames @ 5 FPS (if sender)
+                if self.is_sender and H264_FRAMES:
+                    raw_frame = H264_FRAMES[frame_idx % len(H264_FRAMES)]
+                    frame_idx += 1
+
+                    can_send_video = True
+                    frame_to_packetize = raw_frame
+                    if self.dave_protocol_version > 0:
+                        if self.dave_session and self.dave_session.can_encrypt:
+                            try:
+                                frame_to_packetize = self.dave_session.encrypt(
+                                    davey.MediaType.video, davey.Codec.h264, raw_frame
+                                )
+                            except Exception as exc:
+                                print(f"⚠️ [{self.label}] DAVE video encrypt err: {exc}", flush=True)
+                                can_send_video = False
+                        else:
+                            can_send_video = False
+
+                    if can_send_video:
+                        nals = split_annexb_nals(frame_to_packetize)
+                        total_nals = len(nals)
+                        for n_idx, nal in enumerate(nals):
+                            is_last_nal = (n_idx == total_nals - 1)
+                            if len(nal) <= 1150:
+                                hdr = self._build_rtp_header(101, video_seq, video_ts, self.video_ssrc, marker=is_last_nal)
+                                video_seq = (video_seq + 1) & 0xFFFF
+                                self._send_udp(self._encrypt_packet(hdr, nal))
+                                video_pkts_sent += 1
+                                video_octets_sent += len(nal)
+                            else:
+                                nal_hdr = nal[0]
+                                fu_indicator = (nal_hdr & 0xE0) | 28
+                                nal_type = nal_hdr & 0x1F
+                                body = nal[1:]
+                                chunk_size = 1140
+                                chunks = [body[i:i + chunk_size] for i in range(0, len(body), chunk_size)]
+                                for c_idx, chunk in enumerate(chunks):
+                                    is_first = (c_idx == 0)
+                                    is_last_chunk = (c_idx == len(chunks) - 1)
+                                    fu_hdr = (0x80 if is_first else 0) | (0x40 if is_last_chunk else 0) | nal_type
+                                    rtp_payload = bytes([fu_indicator, fu_hdr]) + chunk
+                                    hdr = self._build_rtp_header(
+                                        101, video_seq, video_ts, self.video_ssrc,
+                                        marker=(is_last_nal and is_last_chunk)
+                                    )
+                                    video_seq = (video_seq + 1) & 0xFFFF
+                                    self._send_udp(self._encrypt_packet(hdr, rtp_payload))
+                                    video_pkts_sent += 1
+                                    video_octets_sent += len(rtp_payload)
+                        video_ts = (video_ts + 18000) & 0xFFFFFFFF  # 90,000 Hz / 5 FPS = 18,000
+
+                # 2. Periodic Opus Silence Frame (every 1s)
+                if now - last_audio_time >= 1.0:
+                    last_audio_time = now
+                    opus_silence = b"\xF8\xFF\xFE"
+                    if self.dave_protocol_version > 0 and self.dave_session and self.dave_session.can_encrypt:
+                        try:
+                            opus_silence = self.dave_session.encrypt_opus(opus_silence)
+                        except Exception:
+                            pass
+                    hdr = self._build_rtp_header(120, audio_seq, audio_ts, self.ssrc, marker=False)
+                    audio_seq = (audio_seq + 1) & 0xFFFF
+                    audio_ts = (audio_ts + 960) & 0xFFFFFFFF
+                    self._send_udp(self._encrypt_packet(hdr, opus_silence))
+                    audio_pkts_sent += 1
+                    audio_octets_sent += len(opus_silence)
+
+                # 3. Encrypted RTCP Sender Report every 1.0s (critical for PC/Mobile WebRTC sync)
+                if now - last_sr_time >= 1.0:
+                    last_sr_time = now
+                    if self.is_sender:
+                        sr_vid = self._build_rtcp_sr(self.video_ssrc, video_ts, video_pkts_sent, video_octets_sent)
+                        self._send_udp(self._encrypt_packet(sr_vid[:8], sr_vid[8:]))
+                    sr_aud = self._build_rtcp_sr(self.ssrc, audio_ts, audio_pkts_sent, audio_octets_sent)
+                    self._send_udp(self._encrypt_packet(sr_aud[:8], sr_aud[8:]))
+
+                # 4. UDP Keepalive every 5s
+                if now - last_ka_time >= 5.0:
+                    last_ka_time = now
+                    self._send_udp(struct.pack("<Q", int(time.time() * 1000)))
+
+                await asyncio.sleep(0.2 if self.is_sender else 1.0)
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"⚠️ [Media Loop] Error: {e}", flush=True)
+            print(f"⚠️ [{self.label}] Media loop error: {e}", flush=True)
+
+    async def _send_dave_key_package(self):
+        if self.ws and not self.ws.closed and self.dave_session:
+            kp = self.dave_session.get_serialized_key_package()
+            await self.ws.send_binary(26, kp)
+
+    async def _handle_dave_binary(self, payload: bytes):
+        if len(payload) < 3:
+            return
+        seq = struct.unpack_from(">H", payload, 0)[0]
+        self.seq_ack = seq
+        v_op = payload[2]
+        body = payload[3:]
+
+        if v_op == 25:  # MLS_EXTERNAL_SENDER_PACKAGE
+            if not self.dave_session:
+                self.dave_session = davey.DaveSession(
+                    max(1, self.dave_protocol_version), int(self.user_id), int(self.channel_id)
+                )
+            self.dave_session.set_external_sender(body)
+
+        elif v_op == 27:  # MLS_PROPOSALS
+            if not self.dave_session or len(body) < 1:
+                return
+            op_type = body[0]
+            proposals = body[1:]
+            op_enum = davey.ProposalsOperationType.append if op_type == 0 else davey.ProposalsOperationType.revoke
+            cw = self.dave_session.process_proposals(op_enum, proposals)
+            if isinstance(cw, davey.CommitWelcome):
+                out = cw.commit + (cw.welcome if cw.welcome else b"")
+                await self.ws.send_binary(28, out)
+
+        elif v_op == 29:  # MLS_ANNOUNCE_COMMIT_TRANSITION
+            if not self.dave_session or len(body) < 2:
+                return
+            tid = struct.unpack_from(">H", body, 0)[0]
+            commit = body[2:]
+            try:
+                should_prep = self.dave_session.process_commit(commit)
+                if should_prep:
+                    self.dave_session.prepare_transition(tid, self.dave_session.protocol_version)
+                    if tid == 0:
+                        self.dave_session.execute_transition(0)
+                    else:
+                        await self.ws.send_json({"op": 23, "d": {"transition_id": tid}})
+            except Exception as exc:
+                print(f"⚠️ [{self.label}] DAVE Commit failed (tid={tid}): {exc}", flush=True)
+                await self.ws.send_json({"op": 31, "d": {"transition_id": tid}})
+                self.dave_session.reset()
+                await self._send_dave_key_package()
+
+        elif v_op == 30:  # MLS_WELCOME
+            if not self.dave_session or len(body) < 2:
+                return
+            tid = struct.unpack_from(">H", body, 0)[0]
+            welcome = body[2:]
+            try:
+                self.dave_session.process_welcome(welcome)
+                self.dave_session.prepare_transition(tid, self.dave_session.protocol_version)
+                if tid == 0:
+                    self.dave_session.execute_transition(0)
+                else:
+                    await self.ws.send_json({"op": 23, "d": {"transition_id": tid}})
+                print(f"🛡️ [{self.label}] DAVE E2EE Group Established (can_encrypt={self.dave_session.can_encrypt})", flush=True)
+            except Exception as exc:
+                print(f"⚠️ [{self.label}] DAVE Welcome failed (tid={tid}): {exc}", flush=True)
+                await self.ws.send_json({"op": 31, "d": {"transition_id": tid}})
+                self.dave_session.reset()
+                await self._send_dave_key_package()
 
     async def _run(self):
         url = self.endpoint
@@ -262,63 +559,88 @@ class RTCVoiceSession:
             url = f"wss://{url}"
         if "?v=" not in url:
             url = f"{url.rstrip('/')}/?v=8"
+
         try:
             self.ws = AsyncWebSocket(url)
             await self.ws.connect()
             await self.ws.send_json({
                 "op": 0,
                 "d": {
-                    "server_id": str(self.server_id), "channel_id": str(self.channel_id),
-                    "user_id": str(self.user_id), "session_id": self.session_id,
-                    "token": self.voice_token, "video": True,
-                    "streams": [{"type": "screen" if self.is_stream else "video", "rid": "100", "quality": 100}]
+                    "server_id": str(self.server_id),
+                    "channel_id": str(self.channel_id),
+                    "user_id": str(self.user_id),
+                    "session_id": self.session_id,
+                    "token": self.voice_token,
+                    "video": True,
+                    "streams": [{"type": "screen" if self.is_stream else "video", "rid": "100", "quality": 100}],
+                    "max_dave_protocol_version": 1
                 }
             })
+
             while self.running:
-                msg = await self.ws.recv_json()
-                if not msg:
+                res = await self.ws.recv_msg()
+                if not res:
                     break
-                op, d = msg.get("op"), msg.get("d") or {}
-                
+                ws_op, data = res
+
+                if ws_op == 0x2:
+                    await self._handle_dave_binary(data)
+                    continue
+
+                msg = data
+                if "seq" in msg and msg["seq"] is not None:
+                    self.seq_ack = msg["seq"]
+
+                op = msg.get("op")
+                d = msg.get("d") or {}
+
                 if op == 8:
                     interval = d.get("heartbeat_interval", 15000) / 1000.0
                     if self._hb_task: self._hb_task.cancel()
                     self._hb_task = asyncio.create_task(self._hb(interval))
-                
+
                 elif op == 2:
-                    ip = d.get("ip")
-                    port = d.get("port")
-                    ssrc = d.get("ssrc", 1)
-                    self.video_ssrc = ssrc + 1
-                    rtx_ssrc = ssrc + 2
-                    modes = d.get("modes", [])
-                    selected_mode = "aead_aes256_gcm_rtpsize" if "aead_aes256_gcm_rtpsize" in modes else modes[0]
-                    
-                    ext_ip = "127.0.0.1"
-                    ext_port = 1337
-                    
-                    # IP Discovery
+                    self.udp_ip = d.get("ip", "")
+                    self.udp_port = int(d.get("port", 0))
+                    self.ssrc = int(d.get("ssrc", 1))
+                    streams = d.get("streams") or []
+                    if streams:
+                        self.video_ssrc = int(streams[0].get("ssrc", self.ssrc + 1))
+                        self.rtx_ssrc = int(streams[0].get("rtx_ssrc", self.video_ssrc + 1))
+                    else:
+                        self.video_ssrc = self.ssrc + 1
+                        self.rtx_ssrc = self.ssrc + 2
+
+                    modes = d.get("modes") or ["aead_xchacha20_poly1305_rtpsize"]
+                    if "aead_aes256_gcm_rtpsize" in modes:
+                        chosen_mode = "aead_aes256_gcm_rtpsize"
+                    elif "aead_xchacha20_poly1305_rtpsize" in modes:
+                        chosen_mode = "aead_xchacha20_poly1305_rtpsize"
+                    else:
+                        chosen_mode = modes[0]
+
+                    ext_ip, ext_port = "127.0.0.1", 1337
                     try:
                         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                         self.udp_socket.setblocking(False)
-                        discovery_pkt = bytearray(74)
-                        struct.pack_into(">H", discovery_pkt, 0, 1)
-                        struct.pack_into(">H", discovery_pkt, 2, 70)
-                        struct.pack_into(">I", discovery_pkt, 4, ssrc)
-                        self.udp_socket.sendto(discovery_pkt, (ip, port))
-                        
+                        disc_pkt = bytearray(74)
+                        struct.pack_into(">H", disc_pkt, 0, 1)
+                        struct.pack_into(">H", disc_pkt, 2, 70)
+                        struct.pack_into(">I", disc_pkt, 4, self.ssrc)
+                        self.udp_socket.sendto(disc_pkt, (self.udp_ip, self.udp_port))
                         loop = asyncio.get_running_loop()
                         resp, _ = await asyncio.wait_for(loop.sock_recv(self.udp_socket, 74), timeout=5.0)
-                        ext_ip = resp[8:72].decode('utf-8').strip('\x00')
+                        ext_ip = resp[8:72].decode("utf-8").strip("\x00")
                         ext_port = struct.unpack_from(">H", resp, 72)[0]
-                    except:
-                        pass
+                        print(f"🌐 [{self.label}] UDP Discovery OK: {ext_ip}:{ext_port}", flush=True)
+                    except Exception as e:
+                        print(f"⚠️ [{self.label}] UDP Discovery Failed: {e}", flush=True)
 
                     await self.ws.send_json({
                         "op": 1,
                         "d": {
                             "protocol": "udp",
-                            "data": {"address": ext_ip, "port": ext_port, "mode": selected_mode},
+                            "data": {"address": ext_ip, "port": ext_port, "mode": chosen_mode},
                             "codecs": [
                                 {"name": "opus", "type": "audio", "priority": 1000, "payload_type": 120},
                                 {"name": "H264", "type": "video", "priority": 1000, "payload_type": 101, "rtx_payload_type": 102, "encode": True, "decode": True}
@@ -326,38 +648,98 @@ class RTCVoiceSession:
                             "rtc_connection_id": self.rtc_connection_id
                         }
                     })
-                    
+
+                elif op == 4:
+                    raw_key = d.get("secret_key") or []
+                    self.encryption_mode = d.get("mode", "")
+                    self.dave_protocol_version = int(d.get("dave_protocol_version", 0))
+                    if len(raw_key) == 32:
+                        self.secret_key = bytes(raw_key)
+                        if self.encryption_mode == "aead_aes256_gcm_rtpsize":
+                            self.aesgcm = AESGCM(self.secret_key)
+                        elif self.encryption_mode == "aead_xchacha20_poly1305_rtpsize":
+                            self.nacl_box = nacl.secret.Aead(self.secret_key)
+
+                    print(f"🔒 [{self.label}] Ready! Cipher={self.encryption_mode} | VideoCodec={d.get('video_codec')} | DAVE_v{self.dave_protocol_version}", flush=True)
+
+                    if self.dave_protocol_version > 0:
+                        self.dave_session = davey.DaveSession(
+                            self.dave_protocol_version, int(self.user_id), int(self.channel_id)
+                        )
+                        await self._send_dave_key_package()
+
+                    await self.ws.send_json({
+                        "op": 5,
+                        "d": {"speaking": 2 if self.is_stream else 1, "delay": 0, "ssrc": self.ssrc}
+                    })
+
                     await self.ws.send_json({
                         "op": 12,
                         "d": {
-                            "audio_ssrc": ssrc, "video_ssrc": self.video_ssrc, "rtx_ssrc": rtx_ssrc,
+                            "audio_ssrc": self.ssrc,
+                            "video_ssrc": self.video_ssrc,
+                            "rtx_ssrc": self.rtx_ssrc,
                             "streams": [{
-                                "type": "video", "rid": "100", "ssrc": self.video_ssrc, "active": True,
-                                "quality": 100, "rtx_ssrc": rtx_ssrc, "max_bitrate": 1500000,
-                                "max_framerate": 30, "max_resolution": {"type": "fixed", "width": 1280, "height": 720}
+                                "type": "video",
+                                "rid": "100",
+                                "ssrc": self.video_ssrc,
+                                "active": True if self.is_sender else False,
+                                "quality": 100,
+                                "rtx_ssrc": self.rtx_ssrc,
+                                "max_bitrate": 500000,
+                                "max_framerate": 5,
+                                "max_resolution": {"type": "fixed", "width": 320, "height": 180}
                             }]
                         }
                     })
 
-                # Opcode 4: The missing Session Description event carrying the real secret_key!
-                elif op == 4:
-                    raw_key = d.get("secret_key", [])
-                    if raw_key and len(raw_key) == 32:
-                        self.secret_key = bytes(raw_key)
-                        self.aesgcm = AESGCM(self.secret_key)
-                        print(f"🔑 [Encryption Ready] AEAD AES-256-GCM initialized for {self.user_id}!", flush=True)
-                        if self.is_stream and not self._media_task:
-                            self._media_task = asyncio.create_task(self._udp_media_loop(ip, port))
-        except:
+                    if not self._media_task:
+                        self._media_task = asyncio.create_task(self._udp_media_loop())
+
+                elif op == 21:  # DAVE_PREPARE_TRANSITION
+                    tid = int(d.get("transition_id", 0))
+                    pver = int(d.get("protocol_version", 0))
+                    if self.dave_session:
+                        self.dave_session.prepare_transition(tid, pver)
+                        if pver == 0:
+                            self.dave_session.set_passthrough_mode(True, 120)
+                    if tid == 0 and self.dave_session:
+                        self.dave_session.execute_transition(0)
+                    else:
+                        await self.ws.send_json({"op": 23, "d": {"transition_id": tid}})
+
+                elif op == 22:  # DAVE_EXECUTE_TRANSITION
+                    tid = int(d.get("transition_id", 0))
+                    if self.dave_session:
+                        self.dave_session.execute_transition(tid)
+
+                elif op == 24:  # DAVE_PREPARE_EPOCH
+                    epoch = int(d.get("epoch", 0))
+                    pver = int(d.get("protocol_version", 1))
+                    self.dave_protocol_version = pver
+                    if epoch == 1:
+                        if self.dave_session:
+                            self.dave_session.reinit(pver, int(self.user_id), int(self.channel_id))
+                        else:
+                            self.dave_session = davey.DaveSession(pver, int(self.user_id), int(self.channel_id))
+                        await self._send_dave_key_package()
+
+        except asyncio.CancelledError:
             pass
+        except Exception as e:
+            print(f"❌ [{self.label}] RTCVoiceSession closed/error: {e}", flush=True)
 
     async def _hb(self, interval: float):
         try:
             while self.running and self.ws and not self.ws.closed:
-                await self.ws.send_json({"op": 3, "d": {"t": int(time.time() * 1000), "seq_ack": -1}})
+                await self.ws.send_json({"op": 3, "d": {"t": int(time.time() * 1000), "seq_ack": self.seq_ack}})
                 await asyncio.sleep(interval)
-        except: pass
+        except Exception:
+            pass
 
+# =====================================================================
+# Managed Account & Main Gateway Logic
+# =====================================================================
 class ManagedAccount:
     def __init__(self, acc_id: str, token: str, role: str, guild_id: str, channel_id: str, owner_id: str = "global", scope: str = "community", username="Loading...", avatar_url=None, tier_num=0, raw_hours=None, total_hours=0.0, current_tier="No Badge (0h)", next_tier="Tier 1: Newcomer (1 hour)", remaining_hours=1.0, progress_percent=0.0, analytics_token=""):
         self.acc_id = acc_id
@@ -370,7 +752,7 @@ class ManagedAccount:
         self.username = username
         self.avatar_url = avatar_url or "https://cdn.discordapp.com/embed/avatars/0.png"
         self.analytics_token = analytics_token
-        
+
         self.tier_num = tier_num
         self.raw_hours = raw_hours
         self.total_hours = total_hours
@@ -386,13 +768,17 @@ class ManagedAccount:
         self.user_id = None
         self.stream_key = None
         self.voice_session_id = None
-        self.rtc_connection_id = str(uuid.uuid4())
+        self.voice_rtc_id = str(uuid.uuid4())
+        self.stream_rtc_id = str(uuid.uuid4())
         self.client_session_id = str(uuid.uuid4())
-        
-        self.watching_streams = set()
-        self.ws = None
-        self.voice_rtc = None
-        self.stream_rtc = None
+
+        # Per-stream_key RTC metadata and active sessions (supports watching multiple streams)
+        self.stream_meta: dict[str, tuple[str, str]] = {}
+        self.watching_streams: set[str] = set()
+        self.ws: AsyncWebSocket | None = None
+        self.voice_rtc: RTCVoiceSession | None = None
+        self.stream_rtcs: dict[str, RTCVoiceSession] = {}
+
         self.running = False
         self.task = None
         self.telemetry_task = None
@@ -415,27 +801,24 @@ class ManagedAccount:
         mins = (elapsed % 3600) // 60
         return f"{hrs}h {mins}m"
 
-    # --- SCIENCE TELEMETRY ENGINE (With duration_tracked_ms) ---
     async def _send_telemetry(self, events):
         if not self.analytics_token or not self.is_connected:
             return
-        payload_events = []
-        for evt in events:
-            payload_events.append({
-                "type": evt,
-                "properties": {
-                    "client_track_timestamp": int(time.time() * 1000),
-                    "client_heartbeat_session_id": self.client_session_id,
-                    "guild_id": self.guild_id,
-                    "channel_id": self.channel_id,
-                    "media_session_id": self.voice_session_id,
-                    "rtc_connection_id": self.rtc_connection_id,
-                    "duration": 60000,
-                    "duration_tracked_ms": 60000, # The exact field Discord pipeline reads!
-                    "is_video_blank": False,
-                    "connection_type": "webrtc"
-                }
-            })
+        payload_events = [{
+            "type": evt,
+            "properties": {
+                "client_track_timestamp": int(time.time() * 1000),
+                "client_heartbeat_session_id": self.client_session_id,
+                "guild_id": self.guild_id,
+                "channel_id": self.channel_id,
+                "media_session_id": self.voice_session_id,
+                "rtc_connection_id": self.stream_rtc_id,
+                "duration": 60000,
+                "duration_tracked_ms": 60000,
+                "is_video_blank": False,
+                "connection_type": "webrtc"
+            }
+        } for evt in events]
         payload = {"token": self.analytics_token, "events": payload_events}
         headers = {
             "Authorization": self.token,
@@ -445,23 +828,22 @@ class ManagedAccount:
         }
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post("https://discord.com/api/v9/science", json=payload, headers=headers) as r:
+                async with session.post("https://discord.com/api/v9/science", json=payload, headers=headers, timeout=8) as r:
                     if r.status in (200, 204):
                         self.telemetry_status = "Tracking Active 🟢"
                     else:
                         self.telemetry_status = f"Err: {r.status} 🔴"
-        except:
+        except Exception:
             self.telemetry_status = "Network Err 🟡"
 
     async def _telemetry_loop(self):
         try:
-            while not self.is_connected or not self.stream_key:
+            while self.running and (not self.is_connected or not self.stream_key):
                 await asyncio.sleep(1)
-            
+            if not self.running:
+                return
             if self.role == "streamer":
                 await self._send_telemetry(["media_session_joined", "video_stream_started"])
-                print(f"📡 [Science] Tracking started for {self.username}!")
-            
             while self.running:
                 await asyncio.sleep(60)
                 if self.role == "streamer" and self.is_connected and not self.cooldown_active:
@@ -474,11 +856,18 @@ class ManagedAccount:
         self.running = True
         self.status = "Connecting... ⏳"
         self.telemetry_status = "Initializing..."
-        self.rtc_connection_id = str(uuid.uuid4())
+        self.voice_rtc_id = str(uuid.uuid4())
+        self.stream_rtc_id = str(uuid.uuid4())
         self.client_session_id = str(uuid.uuid4())
         self.task = asyncio.create_task(self._loop())
         if self.role == "streamer":
             self.telemetry_task = asyncio.create_task(self._telemetry_loop())
+
+    async def _stop_all_stream_rtcs(self):
+        for rtc in list(self.stream_rtcs.values()):
+            await rtc.stop()
+        self.stream_rtcs.clear()
+        self.watching_streams.clear()
 
     async def stop(self):
         self.running = False
@@ -491,10 +880,13 @@ class ManagedAccount:
                 if self.role == "streamer" and self.stream_key:
                     await self.ws.send_json({"op": 19, "d": {"stream_key": self.stream_key}})
                 await self.ws.send_json({"op": 4, "d": {"guild_id": self.guild_id, "channel_id": None, "self_mute": True, "self_deaf": True}})
-            except: pass
+            except Exception:
+                pass
             await self.ws.close()
-        if self.voice_rtc: await self.voice_rtc.stop()
-        if self.stream_rtc: await self.stream_rtc.stop()
+        if self.voice_rtc:
+            await self.voice_rtc.stop()
+            self.voice_rtc = None
+        await self._stop_all_stream_rtcs()
         self.is_connected = False
         self.connected_since = None
         self.status = "Idle 🛑"
@@ -509,8 +901,10 @@ class ManagedAccount:
                 hb_t = None
                 try:
                     while self.running:
-                        msg = await self.ws.recv_json()
-                        if not msg: break
+                        res = await self.ws.recv_msg()
+                        if not res: break
+                        ws_op, msg = res
+                        if ws_op != 0x1: continue
                         op, t, d = msg.get("op"), msg.get("t"), msg.get("d") or {}
                         if op == 10:
                             interval = d.get("heartbeat_interval", 41250) / 1000.0
@@ -529,12 +923,15 @@ class ManagedAccount:
                             await self._handle_dispatch(t, d)
                 finally:
                     if hb_t: hb_t.cancel()
-                    if self.voice_rtc: await self.voice_rtc.stop()
-                    if self.stream_rtc: await self.stream_rtc.stop()
+                    if self.voice_rtc:
+                        await self.voice_rtc.stop()
+                        self.voice_rtc = None
+                    await self._stop_all_stream_rtcs()
                     if self.ws: await self.ws.close()
             except Exception as e:
                 if not self.running: break
                 self.status = f"Error: {e}"
+                print(f"❌ [{self.username}] Gateway Error: {e}", flush=True)
                 await asyncio.sleep(6)
 
     async def _hb(self, interval: float):
@@ -542,7 +939,8 @@ class ManagedAccount:
             while self.running and self.ws and not self.ws.closed:
                 await self.ws.send_json({"op": 1, "d": None})
                 await asyncio.sleep(interval)
-        except: pass
+        except Exception:
+            pass
 
     async def _handle_dispatch(self, t: str, d: dict):
         if t == "READY":
@@ -554,9 +952,10 @@ class ManagedAccount:
             self.voice_session_id = d.get("session_id")
             self.is_connected = True
             self.connected_since = time.time()
-            
+            print(f"✅ [{self.username}] Gateway READY", flush=True)
+
             await self.ws.send_json({"op": 4, "d": {"guild_id": self.guild_id, "channel_id": self.channel_id, "self_mute": True, "self_deaf": True, "self_video": False}})
-            
+
             if self.role == "streamer":
                 await asyncio.sleep(1.5)
                 await self.ws.send_json({"op": 18, "d": {"type": "guild" if self.guild_id else "call", "guild_id": self.guild_id, "channel_id": self.channel_id, "preferred_region": None}})
@@ -567,37 +966,82 @@ class ManagedAccount:
             else:
                 self.status = "Watching VC 👀"
 
+        elif t == "VOICE_STATE_UPDATE":
+            uid = str(d.get("user_id", ""))
+            ch_id = str(d.get("channel_id") or "")
+            is_streaming = bool(d.get("self_stream", False))
+
+            if uid == str(self.user_id):
+                self.voice_session_id = d.get("session_id") or self.voice_session_id
+            elif self.role == "watcher" and self.is_connected and self.scope == "community":
+                # Community Watcher auto-watches anyone opening screenshare in the room
+                s_key = f"guild:{self.guild_id}:{self.channel_id}:{uid}"
+                if ch_id == self.channel_id and is_streaming:
+                    if s_key not in self.watching_streams:
+                        asyncio.create_task(self._safe_delayed_watch(s_key))
+                elif s_key in self.watching_streams:
+                    self.watching_streams.discard(s_key)
+                    old_rtc = self.stream_rtcs.pop(s_key, None)
+                    if old_rtc:
+                        await old_rtc.stop()
+                    self.status = f"Watching {len(self.watching_streams)} Stream(s) 👀"
+
         elif t == "VOICE_SERVER_UPDATE":
             endpoint = d.get("endpoint")
             v_token = d.get("token")
             srv_id = d.get("guild_id") or self.channel_id
             if endpoint and v_token and self.user_id and self.voice_session_id:
-                if self.voice_rtc: await self.voice_rtc.stop()
-                self.voice_rtc = RTCVoiceSession(endpoint, srv_id, self.channel_id, self.user_id, self.voice_session_id, v_token, False)
+                if self.voice_rtc:
+                    await self.voice_rtc.stop()
+                self.voice_rtc = RTCVoiceSession(
+                    f"Voice-{self.username}", endpoint, str(srv_id), str(self.channel_id),
+                    str(self.user_id), self.voice_session_id, v_token, self.voice_rtc_id,
+                    is_stream=False, is_sender=False
+                )
                 self.voice_rtc.start()
 
         elif t == "STREAM_CREATE":
-            if self.role == "streamer":
-                s_key = d.get("stream_key")
-                if s_key:
+            s_key = d.get("stream_key")
+            if s_key:
+                # Capture the CRITICAL rtc_server_id and rtc_channel_id for Stream RTC Identify!
+                rtc_srv = str(d.get("rtc_server_id") or self.guild_id or self.channel_id)
+                rtc_ch = str(d.get("rtc_channel_id") or self.channel_id)
+                self.stream_meta[s_key] = (rtc_srv, rtc_ch)
+                if self.role == "streamer":
                     self.stream_key = s_key
                     await self.ws.send_json({"op": 22, "d": {"stream_key": self.stream_key, "paused": False}})
 
         elif t == "STREAM_DELETE":
-            if self.role == "watcher":
-                s_key = d.get("stream_key")
-                if s_key in self.watching_streams:
-                    self.watching_streams.discard(s_key)
-                    self.status = f"Watching {len(self.watching_streams)} Stream(s) 👀"
+            s_key = d.get("stream_key")
+            if self.role == "watcher" and s_key:
+                self.watching_streams.discard(s_key)
+                old_rtc = self.stream_rtcs.pop(s_key, None)
+                if old_rtc:
+                    await old_rtc.stop()
+                self.status = f"Watching {len(self.watching_streams)} Stream(s) 👀"
 
         elif t == "STREAM_SERVER_UPDATE":
             endpoint = d.get("endpoint")
             s_token = d.get("token")
             s_key = d.get("stream_key") or self.stream_key
             if endpoint and s_token and self.user_id and self.voice_session_id and s_key:
-                if self.stream_rtc: await self.stream_rtc.stop()
-                self.stream_rtc = RTCVoiceSession(endpoint, self.guild_id or self.channel_id, self.channel_id, self.user_id, self.voice_session_id, s_token, self.rtc_connection_id, True)
-                self.stream_rtc.start()
+                rtc_srv, rtc_ch = self.stream_meta.get(s_key, (str(self.guild_id or self.channel_id), str(self.channel_id)))
+                old_rtc = self.stream_rtcs.pop(s_key, None)
+                if old_rtc:
+                    await old_rtc.stop()
+                rtc = RTCVoiceSession(
+                    f"Stream-{self.username}", endpoint, rtc_srv, rtc_ch,
+                    str(self.user_id), self.voice_session_id, s_token,
+                    self.stream_rtc_id if self.role == "streamer" else str(uuid.uuid4()),
+                    is_stream=True, is_sender=(self.role == "streamer")
+                )
+                self.stream_rtcs[s_key] = rtc
+                rtc.start()
+
+    async def _safe_delayed_watch(self, target_stream_key: str):
+        await asyncio.sleep(4)
+        if self.running and self.is_connected and target_stream_key not in self.watching_streams:
+            await self.watch_target(target_stream_key)
 
     async def watch_target(self, target_stream_key: str):
         if self.ws and not self.ws.closed:
@@ -605,6 +1049,9 @@ class ManagedAccount:
             self.watching_streams.add(target_stream_key)
             self.status = f"Watching {len(self.watching_streams)} Stream(s) 👀🔥"
 
+# =====================================================================
+# Cloud Manager & HTTP Server
+# =====================================================================
 class CloudSystemManager:
     def __init__(self):
         self.accounts: dict[str, ManagedAccount] = {}
@@ -640,7 +1087,8 @@ class CloudSystemManager:
                             self.guild_id = g["id"]
                             self.guild_name = g.get("name", "Official Community")
                             return
-        except: pass
+        except Exception:
+            pass
         self.guild_id = DEFAULT_GUILD_ID
 
     async def update_account_badge_from_discord(self, acc: ManagedAccount):
@@ -665,7 +1113,7 @@ class CloudSystemManager:
                                 hrs_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)", desc, re.I)
                                 if hrs_match:
                                     try: raw_hrs = float(hrs_match.group(1))
-                                    except: pass
+                                    except Exception: pass
                                 break
 
                         acc.tier_num = matched_tier
@@ -692,7 +1140,8 @@ class CloudSystemManager:
                                 acc.next_tier = "Max Level Reached! 👑"
                                 acc.remaining_hours = 0.0
                                 acc.progress_percent = 100.0
-        except: pass
+        except Exception:
+            pass
 
     async def _badge_refresh_loop(self):
         try:
@@ -702,7 +1151,8 @@ class CloudSystemManager:
                     if acc.user_id and acc.token:
                         await self.update_account_badge_from_discord(acc)
                         await self.save_account_to_db(acc)
-        except: pass
+        except asyncio.CancelledError:
+            pass
 
     async def verify_token_and_membership(self, token: str):
         headers = {"Authorization": token, "User-Agent": USER_AGENT}
@@ -712,13 +1162,13 @@ class CloudSystemManager:
                 if r1.status != 200: return False, f"API Error ({r1.status})", None, False
                 user_info = await r1.json()
 
-            target_gid = str(self.guild_id)
             async with session.get("https://discord.com/api/v10/users/@me/guilds", headers=headers, timeout=8) as r2:
                 if r2.status == 200:
                     user_guilds = await r2.json()
                     if str(self.guild_id) not in [str(g.get("id")) for g in user_guilds if "id" in g]:
                         return False, "You must join our server first!", user_info, True
-                else: return False, "Could not verify server membership.", user_info, False
+                else:
+                    return False, "Could not verify server membership.", user_info, False
         return True, "Valid", user_info, False
 
     async def init_mongo(self):
@@ -738,7 +1188,8 @@ class CloudSystemManager:
                     next_tier=doc.get("next_tier", "Tier 1: Newcomer (1 hour)"), remaining_hours=doc.get("remaining_hours", 1.0),
                     progress_percent=doc.get("progress_percent", 0.0)
                 )
-        except: self.db = None
+        except Exception:
+            self.db = None
 
     async def save_account_to_db(self, acc: ManagedAccount):
         if self.db is not None:
@@ -752,12 +1203,13 @@ class CloudSystemManager:
                     "next_tier": acc.next_tier, "remaining_hours": acc.remaining_hours,
                     "progress_percent": acc.progress_percent
                 }}, upsert=True)
-            except: pass
+            except Exception:
+                pass
 
     async def remove_account_from_db(self, acc_id: str):
         if self.db is not None:
             try: await self.db.accounts.delete_one({"acc_id": acc_id})
-            except: pass
+            except Exception: pass
 
     async def balance_and_pair_streams(self):
         await asyncio.sleep(3)
@@ -800,7 +1252,8 @@ class CloudSystemManager:
             while True:
                 await self.balance_and_pair_streams()
                 await asyncio.sleep(60)
-        except: pass
+        except asyncio.CancelledError:
+            pass
 
     async def _three_hour_cooldown_loop(self):
         try:
@@ -811,7 +1264,7 @@ class CloudSystemManager:
                     if acc.is_connected and acc.ws and not acc.ws.closed:
                         acc.cooldown_active = True
                         acc.status = "Cooldown Rest (3 mins) ☕"
-                        acc.watching_streams.clear()
+                        await acc._stop_all_stream_rtcs()
                         await acc.ws.send_json({"op": 4, "d": {"guild_id": acc.guild_id, "channel_id": None, "self_mute": True, "self_deaf": True}})
                 await asyncio.sleep(180)
                 for acc in self.accounts.values():
@@ -826,7 +1279,8 @@ class CloudSystemManager:
                             await acc.ws.send_json({"op": 22, "d": {"stream_key": acc.stream_key, "paused": False}})
                             acc.status = "Live Streaming 📺"
                 await self.balance_and_pair_streams()
-        except: pass
+        except asyncio.CancelledError:
+            pass
 
     async def _auto_save_loop(self):
         try:
@@ -834,7 +1288,8 @@ class CloudSystemManager:
                 await asyncio.sleep(60)
                 for acc in self.accounts.values():
                     if acc.running: await self.save_account_to_db(acc)
-        except: pass
+        except asyncio.CancelledError:
+            pass
 
 manager = CloudSystemManager()
 routes = web.RouteTableDef()
@@ -857,7 +1312,7 @@ async def handle_admin_login(request):
     data = await request.json()
     if data.get("password", "") == ADMIN_SECRET:
         resp = web.json_response({"success": True})
-        resp.set_cookie("admin_token", ADMIN_SECRET, max_age=86400*7, httponly=True, samesite="Lax")
+        resp.set_cookie("admin_token", ADMIN_SECRET, max_age=86400 * 7, httponly=True, samesite="Lax")
         return resp
     return web.json_response({"success": False, "error": "Invalid admin password!"})
 
@@ -957,13 +1412,15 @@ app.add_routes(routes)
 app.router.add_static("/public/", path="public", name="public")
 
 async def main():
+    global H264_FRAMES
+    H264_FRAMES = load_video_frames()
     await manager.resolve_guild()
     await manager.init_mongo()
     manager.ensure_background_tasks()
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
-    print(f"🌐 Server Live on Port: {PORT}", flush=True)
+    print(f"🌐 Live on {PORT}", flush=True)
     await site.start()
     while True: await asyncio.sleep(3600)
 
