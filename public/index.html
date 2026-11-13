@@ -1,3 +1,4 @@
+html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,7 +10,7 @@
   <style>
     body { background-color: #0b0e14; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     .card-glass { background: rgba(22, 27, 34, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
-    .capsule-glass { background: rgba(15, 20, 28, 0.92); backdrop-filter: blur(16px); border: 1px solid rgba(139, 92, 246, 0.3); box-shadow: 0 10px 35px -5px rgba(0, 0, 0, 0.7), 0 0 20px -3px rgba(139, 92, 246, 0.25); }
+    .capsule-glass { background: rgba(15, 20, 28, 0.94); backdrop-filter: blur(16px); border: 1px solid rgba(139, 92, 246, 0.35); box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.65), 0 0 20px -3px rgba(139, 92, 246, 0.25); }
     .glow-purple { box-shadow: 0 0 25px -5px rgba(139, 92, 246, 0.35); }
     .custom-scroll::-webkit-scrollbar { width: 6px; }
     .custom-scroll::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 4px; }
@@ -34,13 +35,13 @@
           </h1>
           <p class="text-xs text-gray-400 flex items-center gap-2 mt-1">
             <span class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            Discord Profile v9 Verified • RTP Media & Science Telemetry
+            DAVE E2EE + FFmpeg H.264 + Badge Directory Sync
           </p>
         </div>
       </div>
 
       <div class="flex items-center gap-3">
-        <a href="https://discord.gg/rAx625W8Gn" target="_blank" class="px-4 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-2 transition-all">
+        <a id="headerInviteLink" href="https://discord.gg/rAx625W8Gn" target="_blank" class="px-4 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-2 transition-all">
           <i class="fa-brands fa-discord"></i> Join Official Server
         </a>
         <button id="adminLoginBtn" onclick="openAdminModal()" class="px-4 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-2 transition-all border border-gray-700">
@@ -100,15 +101,15 @@
           <div class="space-y-2 text-xs">
             <div class="flex justify-between py-1 border-b border-gray-800">
               <span class="text-gray-400">Server ID:</span>
-              <span class="text-white font-mono">1059780215720648725</span>
+              <span id="targetGuildId" class="text-white font-mono">1059780215720648725</span>
             </div>
             <div class="flex justify-between py-1 border-b border-gray-800">
               <span class="text-gray-400">Voice Channel ID:</span>
-              <span class="text-indigo-400 font-mono">1569527599426707546</span>
+              <span id="targetChannelId" class="text-indigo-400 font-mono">1569527599426707546</span>
             </div>
             <div class="flex justify-between py-1">
               <span class="text-gray-400">Stream Balancing:</span>
-              <span class="text-emerald-400 font-semibold">Automatic 50/50 Split</span>
+              <span class="text-emerald-400 font-semibold">Auto Paired</span>
             </div>
           </div>
         </div>
@@ -166,12 +167,77 @@
       </div>
 
       <div class="lg:col-span-2 space-y-4">
+
+        <div id="userFloatingCapsule" class="lg:sticky lg:top-4 z-30 hidden">
+          <div class="capsule-glass rounded-2xl p-4 transition-all duration-300">
+            <div class="flex items-center justify-between pb-2.5 border-b border-gray-800/80">
+              <div class="flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span class="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                  <i class="fa-solid fa-gauge-high"></i> My Station
+                </span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button id="capsulePrevBtn" onclick="switchCapsuleAcc(-1)" class="w-6 h-6 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs flex items-center justify-center hidden">
+                  <i class="fa-solid fa-chevron-left"></i>
+                </button>
+                <span id="capsulePageIndicator" class="text-[10px] text-gray-400 font-mono hidden">1/1</span>
+                <button id="capsuleNextBtn" onclick="switchCapsuleAcc(1)" class="w-6 h-6 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs flex items-center justify-center hidden">
+                  <i class="fa-solid fa-chevron-right"></i>
+                </button>
+                <button onclick="scrollToMyCard()" title="Highlight in Leaderboard" class="w-6 h-6 rounded-md bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 text-xs flex items-center justify-center ml-1">
+                  <i class="fa-solid fa-crosshairs"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="pt-3 grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2.5">
+                  <img id="capsuleAvatar" src="https://cdn.discordapp.com/embed/avatars/0.png" class="w-10 h-10 rounded-xl object-cover border border-indigo-500/30 bg-gray-900">
+                  <div>
+                    <div class="flex items-center gap-1.5">
+                      <span id="capsuleUsername" class="text-xs font-bold text-white">DiscordUser</span>
+                      <span id="capsuleRoleBadge" class="text-[9px] font-bold px-1.5 py-0.2 rounded uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30">STREAMER</span>
+                    </div>
+                    <div class="text-[10px] text-gray-400 flex items-center gap-2 mt-0.5">
+                      <span id="capsuleStatusText" class="text-emerald-400 font-medium">Online</span> •
+                      <span id="capsuleUptimeText" class="text-gray-400">Live: 0h 0m</span>
+                    </div>
+                  </div>
+                </div>
+                <button id="capsuleToggleBtn" onclick="toggleCurrentCapsuleAccount()" class="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all bg-rose-600 hover:bg-rose-500 text-white">
+                  <i class="fa-solid fa-power-off"></i> Disconnect
+                </button>
+              </div>
+
+              <div id="capsuleStreamerStats" class="space-y-1 bg-gray-950/60 p-2.5 rounded-xl border border-gray-800/80">
+                <div class="flex justify-between text-[11px] font-semibold">
+                  <span id="capsuleTier" class="text-indigo-300 font-bold">Tier 1</span>
+                  <span id="capsuleHours" class="text-emerald-400 font-mono font-bold">0 hrs</span>
+                </div>
+                <div class="w-full h-1.5 bg-gray-900 rounded-full overflow-hidden">
+                  <div id="capsuleProgressBar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full" style="width: 0%"></div>
+                </div>
+                <div class="flex justify-between text-[9px] text-gray-400 pt-0.5">
+                  <span id="capsuleNextTier">Next: Tier 2</span>
+                  <div class="flex items-center gap-2">
+                    <span id="capsuleTelemetry" class="text-[9px]" title="Science API Telemetry Status">Offline</span>
+                    <span id="capsuleRemainingHours" class="text-amber-400 font-semibold">0h left</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="flex items-center justify-between">
           <h2 class="text-base font-bold text-white flex items-center gap-2">
             <i class="fa-solid fa-ranking-star text-indigo-400"></i> Community Badge Leaderboard
           </h2>
           <span id="totalAccountCount" class="text-xs text-gray-400">0 Accounts Registered</span>
         </div>
+
         <div id="accountsList" class="space-y-3 custom-scroll max-h-[750px] overflow-y-auto pr-1">
           <div class="card-glass rounded-xl p-8 text-center text-gray-500 text-xs">
             <i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2 text-indigo-500"></i>
@@ -183,70 +249,6 @@
     </div>
   </div>
 
-  <!-- FLOATING USER CAPSULE (Bottom Left) -->
-  <div id="userFloatingCapsule" class="fixed bottom-6 left-6 z-40 max-w-sm w-full hidden">
-    <div class="capsule-glass rounded-2xl p-4 transition-all duration-300 border border-indigo-500/30">
-      <div class="flex items-center justify-between pb-3 border-b border-gray-800/80">
-        <div class="flex items-center gap-2">
-          <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span class="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
-            <i class="fa-solid fa-gauge-high"></i> My Station
-          </span>
-        </div>
-        <div class="flex items-center gap-1">
-          <button id="capsulePrevBtn" onclick="switchCapsuleAcc(-1)" class="w-6 h-6 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs flex items-center justify-center hidden">
-            <i class="fa-solid fa-chevron-left"></i>
-          </button>
-          <span id="capsulePageIndicator" class="text-[10px] text-gray-400 font-mono hidden">1/1</span>
-          <button id="capsuleNextBtn" onclick="switchCapsuleAcc(1)" class="w-6 h-6 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs flex items-center justify-center hidden">
-            <i class="fa-solid fa-chevron-right"></i>
-          </button>
-          <button onclick="scrollToMyCard()" title="Highlight in Leaderboard" class="w-6 h-6 rounded-md bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 text-xs flex items-center justify-center ml-1">
-            <i class="fa-solid fa-crosshairs"></i>
-          </button>
-        </div>
-      </div>
-
-      <div class="pt-3 space-y-3">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2.5">
-            <img id="capsuleAvatar" src="https://cdn.discordapp.com/embed/avatars/0.png" class="w-10 h-10 rounded-xl object-cover border border-indigo-500/30 bg-gray-900">
-            <div>
-              <div class="flex items-center gap-1.5">
-                <span id="capsuleUsername" class="text-xs font-bold text-white">DiscordUser</span>
-                <span id="capsuleRoleBadge" class="text-[9px] font-bold px-1.5 py-0.2 rounded uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30">STREAMER</span>
-              </div>
-              <div class="text-[10px] text-gray-400 flex items-center gap-2 mt-0.5">
-                <span id="capsuleStatusText" class="text-emerald-400 font-medium">Online</span> •
-                <span id="capsuleUptimeText" class="text-gray-400">Live: 0h 0m</span>
-              </div>
-            </div>
-          </div>
-          <button id="capsuleToggleBtn" onclick="toggleCurrentCapsuleAccount()" class="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all bg-rose-600 hover:bg-rose-500 text-white">
-            <i class="fa-solid fa-power-off"></i> Disconnect
-          </button>
-        </div>
-
-        <div id="capsuleStreamerStats" class="space-y-1.5 bg-gray-950/60 p-2 rounded-xl border border-gray-800/80">
-          <div class="flex justify-between text-[11px] font-semibold">
-            <span id="capsuleTier" class="text-indigo-300 font-bold">Tier 1</span>
-            <span id="capsuleHours" class="text-emerald-400 font-mono font-bold">0 hrs</span>
-          </div>
-          <div class="w-full h-1.5 bg-gray-900 rounded-full overflow-hidden">
-            <div id="capsuleProgressBar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full" style="width: 0%"></div>
-          </div>
-          <div class="flex justify-between text-[9px] text-gray-400 pt-0.5">
-            <span id="capsuleNextTier">Next: Tier 2</span>
-            <div class="flex items-center gap-1.5">
-              <span id="capsuleTelemetry" class="text-[9px]" title="Science API Telemetry Status">Offline</span>
-              <span id="capsuleRemainingHours" class="text-amber-400 font-semibold">0h left</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <div id="adminModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="card-glass rounded-2xl max-w-sm w-full p-6 text-center space-y-4 border border-amber-500/40">
       <div class="w-14 h-14 rounded-full bg-amber-500/20 text-amber-400 mx-auto flex items-center justify-center text-2xl">
@@ -254,7 +256,7 @@
       </div>
       <h3 class="text-lg font-bold text-white">Admin Authentication</h3>
       <p class="text-xs text-gray-400">Enter master administrative passkey to unlock system management.</p>
-      <input id="adminPassInput" type="password" placeholder="Enter Admin Passkey..." class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-xs text-white text-center tracking-widest focus:outline-none focus:border-amber-500">
+      <input id="adminPassInput" type="password" placeholder="Enter Admin Passkey..." onkeydown="if(event.key==='Enter')submitAdminLogin()" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-xs text-white text-center tracking-widest focus:outline-none focus:border-amber-500">
       <p id="adminFeedback" class="text-xs text-rose-400 hidden"></p>
       <div class="flex gap-2 pt-2">
         <button onclick="closeAdminModal()" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">Cancel</button>
@@ -274,7 +276,7 @@
       </p>
       <div class="flex gap-3 pt-2">
         <button onclick="document.getElementById('membershipModal').classList.add('hidden')" class="flex-1 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs font-semibold text-gray-300">Cancel</button>
-        <a href="https://discord.gg/rAx625W8Gn" target="_blank" onclick="document.getElementById('membershipModal').classList.add('hidden')" class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center justify-center gap-2 shadow-lg">
+        <a id="modalInviteLink" href="https://discord.gg/rAx625W8Gn" target="_blank" onclick="document.getElementById('membershipModal').classList.add('hidden')" class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center justify-center gap-2 shadow-lg">
           <i class="fa-solid fa-arrow-up-right-from-square"></i> Click to Join Server
         </a>
       </div>
@@ -290,6 +292,15 @@
     let isAdminUser = false;
     let myAccounts = [];
     let currentCapsuleIdx = 0;
+
+    function escapeHtml(val) {
+      return String(val ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     function toggleTokenVisibility() {
       const input = document.getElementById('tokenInput');
@@ -332,6 +343,13 @@
 
         isSystemRunning = data.isRunning;
         isAdminUser = data.isAdmin;
+
+        if (data.guildId) document.getElementById('targetGuildId').innerText = data.guildId;
+        if (data.channelId) document.getElementById('targetChannelId').innerText = data.channelId;
+        if (data.serverInvite) {
+          document.getElementById('headerInviteLink').href = data.serverInvite;
+          document.getElementById('modalInviteLink').href = data.serverInvite;
+        }
 
         const loginBtn = document.getElementById('adminLoginBtn');
         const logoutBtn = document.getElementById('adminLogoutBtn');
@@ -411,13 +429,15 @@
         document.getElementById('capsuleProgressBar').style.width = `${acc.progressPercent}%`;
         document.getElementById('capsuleNextTier').innerText = `Next: ${acc.nextTier}`;
         document.getElementById('capsuleRemainingHours').innerText = `${acc.remainingHours}h left`;
-        
+
         const telemetryStatus = document.getElementById('capsuleTelemetry');
         telemetryStatus.innerText = acc.telemetryStatus || 'Offline';
-        if(acc.telemetryStatus && acc.telemetryStatus.includes('🟢')) {
-            telemetryStatus.className = 'text-[9px] text-emerald-400 font-bold';
+        if (acc.telemetryStatus && acc.telemetryStatus.includes('🟢')) {
+          telemetryStatus.className = 'text-[9px] text-emerald-400 font-bold';
+        } else if (acc.telemetryStatus && (acc.telemetryStatus.includes('🔴') || acc.telemetryStatus.includes('⚠️'))) {
+          telemetryStatus.className = 'text-[9px] text-rose-400 font-bold';
         } else {
-            telemetryStatus.className = 'text-[9px] text-gray-500';
+          telemetryStatus.className = 'text-[9px] text-gray-400';
         }
       } else {
         streamerStats.classList.add('hidden');
@@ -436,6 +456,11 @@
       if (!myAccounts || myAccounts.length === 0) return;
       currentCapsuleIdx = (currentCapsuleIdx + dir + myAccounts.length) % myAccounts.length;
       renderFloatingCapsule();
+    }
+
+    async function toggleCurrentCapsuleAccount() {
+      if (!myAccounts || myAccounts.length === 0) return;
+      await toggleAccount(myAccounts[currentCapsuleIdx].id);
     }
 
     function scrollToMyCard() {
@@ -478,22 +503,22 @@
         }
 
         return `
-          <div id="acc-card-${acc.id}" class="card-glass rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 border-l-4 border-${roleColor}-500 transition-all hover:bg-gray-800/40">
+          <div id="acc-card-${escapeHtml(acc.id)}" class="card-glass rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 border-l-4 border-${roleColor}-500 transition-all hover:bg-gray-800/40">
             <div class="flex items-center gap-3 w-full md:w-auto">
               ${isStreamer ? `<div class="w-6 text-center">${rankBadge}</div>` : '<div class="w-6 text-center text-pink-400 text-xs"><i class="fa-solid fa-eye"></i></div>'}
-              <img src="${acc.avatar}" class="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-gray-900" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+              <img src="${escapeHtml(acc.avatar)}" class="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-gray-900" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
               <div>
                 <div class="flex items-center gap-2">
-                  <span class="text-sm font-bold text-white">${acc.username}</span>
+                  <span class="text-sm font-bold text-white">${escapeHtml(acc.username)}</span>
                   ${acc.isOwner ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">YOU</span>' : ''}
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-${roleColor}-500/20 text-${roleColor}-300 border border-${roleColor}-500/30">
-                    ${acc.role} ${acc.scope === 'private' ? '(Private)' : ''}
+                    ${escapeHtml(acc.role)} ${acc.scope === 'private' ? '(Private)' : ''}
                   </span>
                 </div>
                 <div class="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
-                  <span class="text-gray-500">${acc.maskedToken}</span> •
-                  <span class="font-medium text-indigo-300">${acc.status}</span> •
-                  <span class="text-gray-400"><i class="fa-regular fa-clock text-indigo-400"></i> ${acc.uptime}</span>
+                  <span class="text-gray-500">${escapeHtml(acc.maskedToken)}</span> •
+                  <span class="font-medium text-indigo-300">${escapeHtml(acc.status)}</span> •
+                  <span class="text-gray-400"><i class="fa-regular fa-clock text-indigo-400"></i> ${escapeHtml(acc.uptime)}</span>
                 </div>
               </div>
             </div>
@@ -501,15 +526,15 @@
             ${isStreamer ? `
               <div class="w-full md:w-64 space-y-1 bg-gray-900/50 p-2.5 rounded-xl border border-gray-800/80">
                 <div class="flex justify-between text-[11px] font-semibold">
-                  <span class="text-indigo-300 font-bold">${acc.currentTier}</span>
-                  <span class="text-emerald-400 font-mono font-bold">${acc.totalHours} hrs</span>
+                  <span class="text-indigo-300 font-bold">${escapeHtml(acc.currentTier)}</span>
+                  <span class="text-emerald-400 font-mono font-bold">${escapeHtml(acc.totalHours)} hrs</span>
                 </div>
                 <div class="w-full h-1.5 bg-gray-950 rounded-full overflow-hidden border border-gray-800">
-                  <div class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full" style="width: ${acc.progressPercent}%"></div>
+                  <div class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full" style="width: ${Number(acc.progressPercent) || 0}%"></div>
                 </div>
                 <div class="flex justify-between text-[10px] text-gray-400 pt-0.5">
-                  <span class="text-gray-500">Next: ${acc.nextTier}</span>
-                  <span class="text-amber-400 font-semibold">${acc.remainingHours}h remaining</span>
+                  <span class="text-gray-500">Next: ${escapeHtml(acc.nextTier)}</span>
+                  <span class="text-amber-400 font-semibold">${escapeHtml(acc.remainingHours)}h remaining</span>
                 </div>
               </div>
             ` : `
@@ -520,8 +545,8 @@
 
             <div class="flex items-center gap-1.5">
               ${acc.isOwner ? `
-                <button onclick="toggleAccount('${acc.id}')" class="p-2 text-xs rounded-lg transition-all ${acc.running ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'}" title="${acc.running ? 'Disconnect Account' : 'Connect Account'}"><i class="fa-solid fa-power-off"></i></button>
-                <button onclick="removeAccount('${acc.id}')" class="p-2 text-xs rounded-lg text-gray-400 hover:text-rose-400 transition-all hover:bg-gray-800" title="Delete Account"><i class="fa-solid fa-trash-can"></i></button>
+                <button onclick="toggleAccount('${escapeHtml(acc.id)}')" class="p-2 text-xs rounded-lg transition-all ${acc.running ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'}" title="${acc.running ? 'Disconnect Account' : 'Connect Account'}"><i class="fa-solid fa-power-off"></i></button>
+                <button onclick="removeAccount('${escapeHtml(acc.id)}')" class="p-2 text-xs rounded-lg text-gray-400 hover:text-rose-400 transition-all hover:bg-gray-800" title="Delete Account"><i class="fa-solid fa-trash-can"></i></button>
               ` : `<span class="text-gray-700 p-2 text-xs" title="Community Account (Protected)"><i class="fa-solid fa-lock"></i></span>`}
             </div>
           </div>
